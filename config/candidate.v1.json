@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "candidate_id": "kova-qwen3.8-27b-sft-v0",
+  "display_name": "Kova",
+  "base_model": "Qwen/Qwen3.8-27B",
+  "base_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "base_license": "Apache-2.0",
+  "architecture": "Qwen3_5ForConditionalGeneration",
+  "chat_template": "qwen3_8",
+  "upstream_size_bytes": 55615875685,
+  "weight_shards": 18,
+  "multimodal": true,
+  "training": {
+    "backend": "ms-swift-transformers",
+    "stage": "sft",
+    "tuner": "lora",
+    "torch_dtype": "bfloat16",
+    "vision_encoder_frozen": true,
+    "maximum_length": 2048,
+    "epochs": 1,
+    "lora_rank": 8,
+    "lora_alpha": 32
+  },
+  "execution": {
+    "authorized": false,
+    "single_gpu_compatibility_verified": false
+  }
+}
