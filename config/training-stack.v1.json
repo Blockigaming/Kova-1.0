@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "status": "planning_only",
+  "python": "3.12",
+  "packages": [
+    "ms-swift",
+    "transformers>=5.9",
+    "qwen_vl_utils>=0.0.14",
+    "peft",
+    "liger-kernel",
+    "flash-linear-attention>=0.4.2",
+    "flash-attn==2.8.3",
+    "deepspeed"
+  ],
+  "documentation": "https://swift.readthedocs.io/en/latest/BestPractices/Qwen3_8-Best-Practice.html",
+  "execution_authorized": false
+}
