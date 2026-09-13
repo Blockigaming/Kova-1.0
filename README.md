@@ -17,6 +17,12 @@ Kova is not a foundation model trained from scratch. Qwen attribution and its Ap
 ```sh
 npm test
 npm run preflight
+npm run dataset:compile
+npm run training:command
 ```
 
 Passing these checks does not authorize GPU spending, training, deployment, or a production model replacement.
+
+The dataset compiler creates immutable, hashed ms-swift train and validation files.
+The training command is a dry run by default and its execution path remains blocked
+until cost authorization and single-GPU compatibility are separately verified.
