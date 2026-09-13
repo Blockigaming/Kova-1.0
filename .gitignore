@@ -1,0 +1,14 @@
+node_modules/
+artifacts/
+checkpoints/
+weights/
+*.safetensors
+*.gguf
+*.bin
+*.pt
+*.pth
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
