@@ -6,6 +6,9 @@
   "scripts": {
     "validate:data": "node scripts/validate-data.mjs",
     "validate:stack": "node scripts/validate-stack.mjs",
+    "dataset:compile": "node scripts/compile-dataset.mjs",
+    "training:command": "node scripts/training-command.mjs",
+    "training:execute": "node scripts/training-command.mjs --execute",
     "preflight": "npm run validate:data && npm run validate:stack",
     "test": "node --test tests/*.test.mjs"
   }
