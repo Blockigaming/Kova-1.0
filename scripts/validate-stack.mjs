@@ -12,6 +12,7 @@ const surface = JSON.parse(await readFile(new URL("../config/product-surface.v1.
 const activity = JSON.parse(await readFile(new URL("../config/activity-event.v1.json", import.meta.url)));
 const completion = JSON.parse(await readFile(new URL("../config/completion-target.v1.json", import.meta.url)));
 const evaluations = JSON.parse(await readFile(new URL("../config/evaluation-gates.v1.json", import.meta.url)));
+const nova = JSON.parse(await readFile(new URL("../config/nova-candidate.v1.json", import.meta.url)));
 if (candidate.base_model !== "Qwen/Qwen3.8-27B") throw new Error("unexpected_model");
 if (!/^[a-f0-9]{40}$/u.test(candidate.base_revision)) throw new Error("unpinned_revision");
 if (candidate.execution.authorized !== false) throw new Error("execution_must_be_blocked");
@@ -105,11 +106,22 @@ if (surface.deep_mode_experience.hidden_chain_of_thought_exposed !== false || ac
 if (activity.rules.must_follow_real_runtime_or_tool_event !== true || activity.rules.may_claim_unstarted_action !== false) {
   throw new Error("activity_must_be_truthfully_grounded");
 }
-if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 10 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
+if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 11 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
   throw new Error("completion_progress_contract_mismatch");
 }
 if (evaluations.target_routes !== 25 || evaluations.passing_routes.length !== 0 || evaluations.release_policy.allow_name_only_mode_variants !== false) {
   throw new Error("all_routes_require_real_evaluation_evidence");
+}
+const novaCatalog = catalog.models.find((model) => model.id === "kova-5.6-nova");
+if (
+  nova.base_model !== novaCatalog.upstream_model ||
+  nova.base_revision !== novaCatalog.upstream_revision ||
+  nova.base_license !== novaCatalog.license ||
+  nova.execution.authorized !== false ||
+  nova.execution.runpod_hardware_verified !== false ||
+  nova.license_obligations.commercial_license_review_required_before_deployment !== true
+) {
+  throw new Error("nova_must_match_verified_source_and_stay_blocked");
 }
 for (const model of catalog.models) {
   if (!model.upstream_model && model.deployment_ready !== false) {
