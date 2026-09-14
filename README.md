@@ -11,6 +11,16 @@ Kova is not a foundation model trained from scratch. Qwen attribution and its Ap
 - Paid training disabled
 - No trained Kova checkpoint exists yet
 - No KovaGPT production routing has changed
+- Progress is 10% under the product-complete definition; zero of 25 target routes are live
+
+## Product-complete target
+
+Kova Auto sits above six Chat modes: Instant, Medium, High, Extra High, Max,
+and Ultra. Work exposes Kova 5.6 Cosmo, Kova 5.6 Orion, and Kova 5.6 Nova,
+each with Light through Ultra effort. Instant responds directly. Deeper modes
+may provide concise, truthful progress updates and ask focused questions when
+missing information would materially change the result. Activity text is never
+hidden chain-of-thought and may only describe events that actually occurred.
 
 ## Free checks
 
