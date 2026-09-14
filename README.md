@@ -72,7 +72,9 @@ server-recorded outputs required by that stage's DAG, recounts the fully bound p
 and rejects mismatched stage limits or missing artifacts. Public stages must return
 real streaming chunks; the worker assembles content, tool-call fragments, and usage
 before sanitizing the result and measures first-visible-delta latency with its
-monotonic clock. Private stages use non-streaming responses. The worker pins its
+monotonic clock. That measurement is preserved if a later stream chunk fails;
+attempts with no visible public delta and all private non-stream stages record TTFT
+as unavailable (`null`) instead of inventing a value. Private stages use non-streaming responses. The worker pins its
 candidate model server-side and fails closed if hidden reasoning appears in a separate
 field or embedded `<think>` block. The unquantized hardware matrix starts at 80 GB VRAM. No container image
 is selected until a compatible image digest and Qwen3.8 serving path are verified.

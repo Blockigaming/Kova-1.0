@@ -140,7 +140,7 @@ class HandlerTests(unittest.TestCase):
                 token_counter=self.token_counter,
             )
 
-    def test_private_core_stage_uses_non_stream_response_and_measured_availability(self):
+    def test_private_core_stage_uses_non_stream_response_and_null_ttft(self):
         records = []
         captured = []
         result = handle_job(
@@ -156,7 +156,7 @@ class HandlerTests(unittest.TestCase):
         self.assertFalse(captured[0]["stream"])
         self.assertNotIn("stream_options", captured[0])
         self.assertEqual(result["content"], "answer")
-        self.assertEqual(records[0]["time_to_first_token_ms"], 25)
+        self.assertIsNone(records[0]["time_to_first_token_ms"])
 
     def test_public_core_stage_rejects_fake_non_streaming_response(self):
         records = []
@@ -248,6 +248,26 @@ class HandlerTests(unittest.TestCase):
             )
         self.assertEqual(records[0]["outcome"], "failed")
         self.assertEqual(records[0]["inference_ms"], 25)
+        self.assertIsNone(records[0]["time_to_first_token_ms"])
+
+    def test_stream_failure_preserves_first_token_measurement(self):
+        records = []
+
+        def disconnecting_stream():
+            yield {"choices": [{"delta": {"content": "partial"}}]}
+            raise RuntimeError("stream disconnected")
+
+        with self.assertRaisesRegex(RuntimeError, "stream disconnected"):
+            handle_job(
+                {"input": self.request()}, lambda _payload: disconnecting_stream(),
+                self.runtime_probe(), records.append,
+                execution_context=self.execution_context(), token_counter=self.token_counter,
+                clock_ns=Clock(0, 10_000_000, 50_000_000),
+                attempt_id_factory=lambda: "failed-stream-attempt",
+            )
+        self.assertEqual(records[0]["outcome"], "failed")
+        self.assertEqual(records[0]["time_to_first_token_ms"], 10)
+        self.assertEqual(records[0]["inference_ms"], 50)
 
     def test_malformed_engine_message_fails_closed(self):
         for response, pattern in (

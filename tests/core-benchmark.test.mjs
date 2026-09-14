@@ -57,7 +57,7 @@ const group = (result, route = "instant", config = configuration()) =>
 test("Core benchmark prices one complete RunPod lifecycle", () => {
   const result = summarizeCoreBenchmark([attempt(), close()]);
   const instant = group(result);
-  assert.equal(result.schema_version, 3);
+  assert.equal(result.schema_version, 4);
   assert.equal(result.worker_lifecycles, 1);
   assert.equal(instant.successful_requests, 1);
   assert.ok(Math.abs(instant.total_attributable_compute_cost_usd - 0.009) < 1e-12);
@@ -100,7 +100,7 @@ test("Core benchmark attributes failed retries to a successful request", () => {
 
 test("Core request is not successful when only a private stage succeeded", () => {
   const result = summarizeCoreBenchmark([
-    attempt({route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium"}),
+    attempt({route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
     close(),
   ]);
   const medium = group(result, "medium");
@@ -110,8 +110,8 @@ test("Core request is not successful when only a private stage succeeded", () =>
 
 test("Core request succeeds only after every declared route stage succeeds", () => {
   const result = summarizeCoreBenchmark([
-    attempt({attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium"}),
-    warmAttempt({attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium"}),
+    attempt({attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
+    warmAttempt({attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
     warmAttempt({attempt_id: "verification", route_id: "medium", stage_id: "verification-1", reasoning_effort: "medium"}),
     close(),
   ]);
@@ -148,8 +148,8 @@ test("Core benchmark validates stage visibility against Chat and Work DAGs", () 
 test("shared Core lifecycle can span routes and conserves allocated overhead", () => {
   const result = summarizeCoreBenchmark([
     attempt({inference_ms: 1000}),
-    warmAttempt({request_id: "request-2", attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000}),
-    warmAttempt({request_id: "request-2", attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000}),
+    warmAttempt({request_id: "request-2", attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
+    warmAttempt({request_id: "request-2", attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
     warmAttempt({request_id: "request-2", attempt_id: "verify", route_id: "medium", stage_id: "verification-1", reasoning_effort: "medium", inference_ms: 1000}),
     close(),
   ]);
@@ -177,6 +177,20 @@ test("Core benchmark rejects malformed model, rates, timing, and serving identit
   assert.throws(() => summarizeCoreBenchmark([attempt({time_to_first_token_ms: 3000}), close()]), /first token exceeds inference/);
   assert.throws(() => summarizeCoreBenchmark([attempt({serving_engine: "unknown"}), close()]), /serving_engine/);
   assert.throws(() => summarizeCoreBenchmark([attempt({container_image_digest: "latest"}), close()]), /container_image_digest/);
+});
+
+test("Core benchmark treats TTFT as public-stream-only and nullable before first output", () => {
+  assert.throws(() => summarizeCoreBenchmark([
+    attempt({route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium"}), close(),
+  ]), /private stage must not claim first-token timing/);
+  assert.throws(() => summarizeCoreBenchmark([
+    attempt({time_to_first_token_ms: null}), close(),
+  ]), /successful public stage missing first-token timing/);
+  const result = summarizeCoreBenchmark([
+    attempt({outcome: "failed", time_to_first_token_ms: null, output_tokens: 0}), close(),
+  ]);
+  assert.equal(group(result).failed_attempts, 1);
+  assert.equal(group(result).successful_requests, 0);
 });
 
 test("Core lifecycle rejects mixed hardware even when model and route match", () => {

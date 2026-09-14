@@ -166,13 +166,23 @@ export function summarizeCoreBenchmark(records) {
       if (record.public_response !== (record.stage_id === routeSpec.public_stage)) {
         throw new Error(`record ${index} public_response does not match route DAG`);
       }
-      for (const field of ["worker_start_ms", "model_load_ms", "queue_ms", "inference_ms", "time_to_first_token_ms"]) {
+      for (const field of ["worker_start_ms", "model_load_ms", "queue_ms", "inference_ms"]) {
         if (!Number.isFinite(record[field]) || record[field] < 0) throw new Error(`record ${index} invalid ${field}`);
       }
       for (const field of ["input_tokens", "output_tokens"]) {
         if (!Number.isInteger(record[field]) || record[field] < 0) throw new Error(`record ${index} invalid ${field}`);
       }
-      if (record.time_to_first_token_ms > record.inference_ms) throw new Error(`record ${index} first token exceeds inference`);
+      const firstToken = record.time_to_first_token_ms;
+      if (firstToken !== null && (!Number.isFinite(firstToken) || firstToken < 0)) {
+        throw new Error(`record ${index} invalid time_to_first_token_ms`);
+      }
+      if (!record.public_response && firstToken !== null) {
+        throw new Error(`record ${index} private stage must not claim first-token timing`);
+      }
+      if (record.public_response && record.outcome === "success" && firstToken === null) {
+        throw new Error(`record ${index} successful public stage missing first-token timing`);
+      }
+      if (firstToken !== null && firstToken > record.inference_ms) throw new Error(`record ${index} first token exceeds inference`);
       const startupMs = record.worker_start_ms + record.model_load_ms;
       if (record.cold_start && startupMs <= 0) throw new Error(`record ${index} cold attempt missing measured startup`);
       if (!record.cold_start && startupMs !== 0) throw new Error(`record ${index} warm attempt contains startup attribution`);
@@ -266,11 +276,11 @@ export function summarizeCoreBenchmark(records) {
   const totalInferenceCost = pricedAttempts.reduce((total, record) => total + record.inference_cost_usd, 0);
   const totalIdleCost = pricedCloses.reduce((total, record) => total + record.idle_cost_usd, 0);
   return {
-    schema_version: 3,
+    schema_version: 4,
     provider: "runpod_serverless",
     cost_scope: "runpod_compute_only_excludes_storage_app_tools_payment_and_taxes",
     lifecycle_overhead_allocation: "equal_share_per_logical_request_in_lifecycle",
-    timing_contract: "worker_start_model_load_inference_and_idle_tail_are_nonoverlapping_server_measured_phases",
+    timing_contract: "worker_start_model_load_inference_and_idle_tail_are_nonoverlapping_server_measured_phases;ttft_is_public_stream_first_visible_delta_or_null_when_unavailable",
     attempts: pricedAttempts.length,
     worker_lifecycles: lifecycles.size,
     total_attributable_compute_cost_usd: totalStartupCost + totalInferenceCost + totalIdleCost,

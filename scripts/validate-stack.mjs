@@ -107,7 +107,10 @@ if (
   inference.streaming.public_stage_requires_chunk_iterable !== true ||
   inference.streaming.private_stage_requires_non_stream_response !== true ||
   inference.streaming.assemble_content_tool_calls_and_usage_before_sanitizing !== true ||
-  inference.streaming.time_to_first_token_source !== "worker_monotonic_clock_first_visible_delta"
+  inference.streaming.time_to_first_token_source !== "worker_monotonic_clock_first_visible_public_delta" ||
+  inference.streaming.time_to_first_token_unavailable_value !== null ||
+  inference.streaming.private_stage_time_to_first_token_is_null !== true ||
+  inference.streaming.preserve_measured_time_to_first_token_on_stream_failure !== true
 ) throw new Error("inference_executor_contract_invalid");
 if (hardware.model !== candidate.base_model || hardware.paid_benchmark_authorized !== false) {
   throw new Error("hardware_benchmark_must_match_candidate_and_stay_blocked");

@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "status": "source_only",
   "transport": "runpod_serverless_queue",
   "engine": "runpod_benchmark_worker_candidate",
@@ -24,7 +24,10 @@
     "public_stage_requires_chunk_iterable": true,
     "private_stage_requires_non_stream_response": true,
     "assemble_content_tool_calls_and_usage_before_sanitizing": true,
-    "time_to_first_token_source": "worker_monotonic_clock_first_visible_delta"
+    "time_to_first_token_source": "worker_monotonic_clock_first_visible_public_delta",
+    "time_to_first_token_unavailable_value": null,
+    "private_stage_time_to_first_token_is_null": true,
+    "preserve_measured_time_to_first_token_on_stream_failure": true
   },
   "telemetry": {
     "attempt_record_required": ["record_type", "request_id", "attempt_id", "outcome", "model", "model_revision", "route_id", "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start", "reasoning_effort", "worker_start_ms", "model_load_ms", "queue_ms", "inference_ms", "time_to_first_token_ms", "input_tokens", "output_tokens", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],

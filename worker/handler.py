@@ -229,13 +229,17 @@ def _append_stream_tool_calls(states, fragments):
                     state["function"][field] += part
 
 
-def consume_engine_response(response, *, expect_stream, clock_ns, started_ns):
+def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, timing_state):
     """Normalize one engine response and measure first visible streamed output."""
+    _require(
+        isinstance(timing_state, dict) and set(timing_state) == {"time_to_first_token_ms"} and
+        timing_state["time_to_first_token_ms"] is None,
+        "invalid stream timing state",
+    )
     if not expect_stream:
         normalized = _mapping(response, "non-stream engine response must be an object")
         finished_ns = clock_ns()
-        elapsed_ms = max(0, finished_ns - started_ns) / 1_000_000
-        return normalized, finished_ns, elapsed_ms
+        return normalized, finished_ns
 
     _require(not isinstance(response, dict), "streaming engine response must be an iterable of chunks")
     _require(not isinstance(response, (str, bytes)), "streaming engine response must be an iterable of chunks")
@@ -265,20 +269,18 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns):
             _require(isinstance(fragments, list), "stream tool_calls must be an array")
             if first_token_ns is None and (content or fragments):
                 first_token_ns = clock_ns()
+                timing_state["time_to_first_token_ms"] = max(0, first_token_ns - started_ns) / 1_000_000
             if content:
                 content_parts.append(content)
             _append_stream_tool_calls(tool_call_states, fragments)
 
     finished_ns = clock_ns()
-    if first_token_ns is None:
-        first_token_ns = finished_ns
     tool_calls = [tool_call_states[index] for index in sorted(tool_call_states)]
     normalized = {
         "choices": [{"message": {"content": "".join(content_parts), "tool_calls": tool_calls}}],
         "usage": usage,
     }
-    first_token_ms = max(0, first_token_ns - started_ns) / 1_000_000
-    return normalized, finished_ns, first_token_ms
+    return normalized, finished_ns
 
 
 def _sanitized_tool_calls(value):
@@ -438,14 +440,15 @@ def handle_job(
     started_ns = clock_ns()
     response = None
     finished_ns = None
-    first_token_ms = 0
+    timing_state = {"time_to_first_token_ms": None}
     try:
         response = inference_client(engine_request)
-        response, finished_ns, first_token_ms = consume_engine_response(
+        response, finished_ns = consume_engine_response(
             response,
             expect_stream=engine_request["stream"],
             clock_ns=clock_ns,
             started_ns=started_ns,
+            timing_state=timing_state,
         )
         result = sanitize_engine_response(value["request_id"], response)
     except Exception:
@@ -454,14 +457,17 @@ def handle_job(
         after = validate_runtime_probe(runtime_probe, "after")
         _require(all(after[field] == before[field] for field in RUNTIME_IDENTITY_FIELDS), "runtime identity changed during attempt")
         elapsed_ms = max(0, finished_ns - started_ns) / 1_000_000
-        _require(first_token_ms <= elapsed_ms, "first token exceeds measured inference")
+        first_token_ms = timing_state["time_to_first_token_ms"]
+        _require(first_token_ms is None or first_token_ms <= elapsed_ms, "first token exceeds measured inference")
         failed = _attempt_record(value, execution, attempt_id, "failed", elapsed_ms, first_token_ms, after, response)
         telemetry_sink(failed)
         raise
     after = validate_runtime_probe(runtime_probe, "after")
     _require(all(after[field] == before[field] for field in RUNTIME_IDENTITY_FIELDS), "runtime identity changed during attempt")
     elapsed_ms = max(0, finished_ns - started_ns) / 1_000_000
-    _require(first_token_ms <= elapsed_ms, "first token exceeds measured inference")
+    first_token_ms = timing_state["time_to_first_token_ms"]
+    _require(first_token_ms is None or first_token_ms <= elapsed_ms, "first token exceeds measured inference")
+    _require(not execution["public_response"] or first_token_ms is not None, "public response missing first-token measurement")
     succeeded = _attempt_record(value, execution, attempt_id, "success", elapsed_ms, first_token_ms, after, response)
     telemetry_sink(succeeded)
     result["benchmark"] = succeeded
