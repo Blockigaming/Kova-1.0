@@ -8,6 +8,10 @@ const economics = JSON.parse(await readFile(new URL("../config/economics.v1.json
 const identity = JSON.parse(await readFile(new URL("../config/identity.v1.json", import.meta.url)));
 const inference = JSON.parse(await readFile(new URL("../config/inference-contract.v1.json", import.meta.url)));
 const hardware = JSON.parse(await readFile(new URL("../config/hardware-benchmark.v1.json", import.meta.url)));
+const surface = JSON.parse(await readFile(new URL("../config/product-surface.v1.json", import.meta.url)));
+const activity = JSON.parse(await readFile(new URL("../config/activity-event.v1.json", import.meta.url)));
+const completion = JSON.parse(await readFile(new URL("../config/completion-target.v1.json", import.meta.url)));
+const evaluations = JSON.parse(await readFile(new URL("../config/evaluation-gates.v1.json", import.meta.url)));
 if (candidate.base_model !== "Qwen/Qwen3.8-27B") throw new Error("unexpected_model");
 if (!/^[a-f0-9]{40}$/u.test(candidate.base_revision)) throw new Error("unpinned_revision");
 if (candidate.execution.authorized !== false) throw new Error("execution_must_be_blocked");
@@ -63,6 +67,45 @@ if (hardware.model !== candidate.base_model || hardware.paid_benchmark_authorize
 }
 if (hardware.minimum_unquantized_vram_gb < 80 || hardware.candidates.some((gpu) => gpu.vram_gb < 80 || gpu.benchmark_complete !== false)) {
   throw new Error("unquantized_candidates_require_unbenchmarked_80gb_gpu");
+}
+const expectedChatModes = ["instant", "medium", "high", "extra-high", "max", "ultra"];
+if (surface.assistant_name !== "Kova" || surface.auto_route.id !== "kova-auto") {
+  throw new Error("kova_auto_surface_required");
+}
+if (surface.chat_modes.map((mode) => mode.id).join(",") !== expectedChatModes.join(",")) {
+  throw new Error("six_ordered_chat_modes_required");
+}
+if (surface.chat_modes.find((mode) => mode.id === "instant").activity_updates !== false) {
+  throw new Error("instant_must_respond_directly");
+}
+for (const id of ["high", "extra-high", "max", "ultra"]) {
+  if (surface.chat_modes.find((mode) => mode.id === id).activity_updates !== true) {
+    throw new Error(`deep_mode_requires_activity:${id}`);
+  }
+}
+if (surface.work_families.map((family) => family.display_name).join(",") !== "Kova 5.6 Cosmo,Kova 5.6 Orion,Kova 5.6 Nova") {
+  throw new Error("three_kova_work_families_required");
+}
+if (surface.work_efforts.length !== 6 || surface.work_families.length * surface.work_efforts.length !== 18) {
+  throw new Error("eighteen_work_combinations_required");
+}
+if (surface.effort_profiles.length !== 6 || surface.effort_profiles.map((profile) => profile.name).join(",") !== surface.work_efforts.join(",")) {
+  throw new Error("six_distinct_work_effort_profiles_required");
+}
+if (surface.effort_profiles.some((profile, index, profiles) => index > 0 && profile.maximum_output_tokens <= profiles[index - 1].maximum_output_tokens)) {
+  throw new Error("work_effort_budgets_must_increase");
+}
+if (surface.deep_mode_experience.hidden_chain_of_thought_exposed !== false || activity.rules.may_expose_hidden_reasoning !== false) {
+  throw new Error("hidden_reasoning_must_stay_private");
+}
+if (activity.rules.must_follow_real_runtime_or_tool_event !== true || activity.rules.may_claim_unstarted_action !== false) {
+  throw new Error("activity_must_be_truthfully_grounded");
+}
+if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 10 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
+  throw new Error("completion_progress_contract_mismatch");
+}
+if (evaluations.target_routes !== 25 || evaluations.passing_routes.length !== 0 || evaluations.release_policy.allow_name_only_mode_variants !== false) {
+  throw new Error("all_routes_require_real_evaluation_evidence");
 }
 for (const model of catalog.models) {
   if (!model.upstream_model && model.deployment_ready !== false) {
