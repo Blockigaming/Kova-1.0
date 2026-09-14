@@ -27,6 +27,11 @@ Passing these checks does not authorize GPU spending, training, deployment, or a
 worker telemetry into actual compute cost and cold-start percentage. It never calls
 RunPod. Pricing remains blocked until real endpoint samples exist.
 
+The source-only worker validates request IDs, roles, reasoning effort, and token
+limits; pins the upstream model server-side; and strips hidden reasoning from its
+response. The unquantized hardware matrix starts at 80 GB VRAM. No container image
+is selected until a compatible image digest and Qwen3.8 serving path are verified.
+
 ## RunPod Serverless plan
 
 The checked-in RunPod configuration is planning-only and fail-closed. It uses Flex
