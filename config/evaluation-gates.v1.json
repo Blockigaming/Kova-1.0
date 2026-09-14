@@ -15,6 +15,14 @@
     "measured_total_cost",
     "cold_and_warm_behavior"
   ],
+  "architecture_gates": [
+    "core_candidate_wins_documented_quality_latency_and_cost_benchmark",
+    "cosmo_orion_nova_have_measurably_distinct_compute_policies",
+    "ultra_uses_dynamic_specialists_disagreement_check_judge_and_synthesis",
+    "provider_and_model_selection_are_server_controlled",
+    "existing_azure_routes_remain_unchanged_until_canary_verification",
+    "cloudflare_and_runpod_billing_constraints_are_explicitly_accepted"
+  ],
   "release_policy": {
     "allow_partial_route_evidence": false,
     "allow_name_only_mode_variants": false,

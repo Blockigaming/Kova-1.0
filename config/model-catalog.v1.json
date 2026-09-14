@@ -1,48 +1,34 @@
 {
   "schema_version": 1,
-  "status": "verification_in_progress",
-  "default_model": "kova-auto",
-  "models": [
+  "status": "two_engine_verification_in_progress",
+  "default_route": "kova-auto",
+  "physical_engines": [
     {
-      "id": "kova-auto",
-      "display_name": "Kova",
-      "routing": "automatic",
+      "id": "kova-core",
+      "display_name": "Kova Core",
+      "provider": "cloudflare_workers_ai",
+      "upstream_model": null,
+      "selection": "benchmark_required",
       "deployment_ready": false
     },
     {
-      "id": "kova-5.6-cosmo",
-      "display_name": "Kova 5.6 Cosmo",
-      "upstream_model": "Qwen/Qwen3.8-27B-FP8",
-      "upstream_revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
-      "license": "Apache-2.0",
-      "verification": "upstream_verified_hardware_benchmark_blocked",
-      "deployment_ready": false
-    },
-    {
-      "id": "kova-5.6-orion",
-      "display_name": "Kova 5.6 Orion",
-      "upstream_model": "Qwen/Qwen3.8-27B",
-      "upstream_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
-      "license": "Apache-2.0",
-      "reasoning_efforts": {
-        "Light": "low",
-        "Medium": "medium",
-        "High": "xhigh",
-        "Extra High": "xhigh",
-        "Max": "xhigh",
-        "Ultra": "xhigh"
-      },
-      "note": "High through Ultra require separate measured token and time budgets; they are not separate quantized models.",
-      "deployment_ready": false
-    },
-    {
-      "id": "kova-5.6-nova",
-      "display_name": "Kova 5.6 Nova",
-      "upstream_model": "Qwen/Qwen3.8-2.4T-A95B",
-      "upstream_revision": "207bd685a7e3696cfaff12ded7c6a7ea0f88c996",
-      "license": "Qwen3.8-Max",
-      "verification": "upstream_verified_hardware_and_license_review_blocked",
+      "id": "kova-ultra",
+      "display_name": "Kova Ultra Engine",
+      "provider": "runpod_serverless",
+      "upstream_model": null,
+      "selection": "orchestrator_and_worker_model_benchmark_required",
       "deployment_ready": false
     }
+  ],
+  "public_profiles": [
+    { "id": "kova-5.6-cosmo", "display_name": "Kova 5.6 Cosmo", "engine": "kova-core", "separate_foundation_weights": false, "deployment_ready": false },
+    { "id": "kova-5.6-orion", "display_name": "Kova 5.6 Orion", "engine": "kova-core", "separate_foundation_weights": false, "deployment_ready": false },
+    { "id": "kova-5.6-nova", "display_name": "Kova 5.6 Nova", "engine": "kova-core", "separate_foundation_weights": false, "deployment_ready": false },
+    { "id": "kova-ultra-mode", "display_name": "Kova Ultra", "engine": "kova-ultra", "separate_foundation_weights": false, "deployment_ready": false }
+  ],
+  "evaluated_self_hosted_candidates": [
+    { "model": "Qwen/Qwen3.8-27B", "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0", "license": "Apache-2.0", "status": "source_verified_hardware_unbenchmarked" },
+    { "model": "Qwen/Qwen3.8-27B-FP8", "revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a", "license": "Apache-2.0", "status": "source_verified_hardware_unbenchmarked" },
+    { "model": "Qwen/Qwen3.8-2.4T-A95B", "revision": "207bd685a7e3696cfaff12ded7c6a7ea0f88c996", "license": "Qwen3.8-Max", "status": "source_verified_hardware_and_license_blocked" }
   ]
 }

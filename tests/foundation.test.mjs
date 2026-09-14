@@ -55,10 +55,16 @@ test("Runpod plan scales to zero and stays blocked from paid execution", () => {
   assert.equal(config.safety.deployment_authorized, false);
 });
 
-test("model catalog never marks an unverified checkpoint deployment-ready", () => {
+test("model catalog keeps both unselected engines and all public profiles blocked", () => {
   const catalog = JSON.parse(readFileSync(join(root, "config/model-catalog.v1.json"), "utf8"));
-  for (const model of catalog.models) {
-    if (!model.upstream_model) assert.equal(model.deployment_ready, false, model.id);
+  assert.deepEqual(catalog.physical_engines.map((engine) => engine.id), ["kova-core", "kova-ultra"]);
+  for (const engine of catalog.physical_engines) {
+    assert.equal(engine.upstream_model, null, engine.id);
+    assert.equal(engine.deployment_ready, false, engine.id);
+  }
+  for (const profile of catalog.public_profiles) {
+    assert.equal(profile.separate_foundation_weights, false, profile.id);
+    assert.equal(profile.deployment_ready, false, profile.id);
   }
 });
 
@@ -76,4 +82,19 @@ test("product target contains six chat modes and eighteen Work combinations", ()
   assert.equal(surface.work_families.length * surface.work_efforts.length, 18);
   assert.equal(surface.chat_modes.find((mode) => mode.id === "instant").activity_updates, false);
   assert.equal(surface.chat_modes.find((mode) => mode.id === "ultra").activity_updates, true);
+  assert.ok(surface.chat_modes.slice(0, 5).every((mode) => mode.engine === "kova-core"));
+  assert.equal(surface.chat_modes.at(-1).engine, "kova-ultra");
+});
+
+test("provider architecture preserves Azure and exposes Cloudflare billing tradeoff", () => {
+  const config = JSON.parse(readFileSync(join(root, "config/provider-architecture.v1.json"), "utf8"));
+  assert.equal(config.application_plane.provider, "azure_container_apps");
+  assert.equal(config.application_plane.delete_existing_azure_deployments, false);
+  const core = config.engines.find((engine) => engine.id === "kova-core");
+  assert.equal(core.provider, "cloudflare_workers_ai");
+  assert.equal(core.selected_model, null);
+  assert.equal(core.billing.satisfies_no_flat_fee_and_no_prepaid_credits, false);
+  const ultra = config.engines.find((engine) => engine.id === "kova-ultra");
+  assert.equal(ultra.provider, "runpod_serverless");
+  assert.equal(ultra.active_workers, 0);
 });

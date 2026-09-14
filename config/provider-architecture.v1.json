@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "status": "planning_only",
+  "source_evidence_verified_on": "2026-09-14",
+  "source_urls": {
+    "cloudflare_workers_ai_models": "https://developers.cloudflare.com/workers-ai/models/",
+    "cloudflare_qwen3_8_27b": "https://developers.cloudflare.com/workers-ai/models/qwen3.8-27b/",
+    "cloudflare_workers_ai_pricing": "https://developers.cloudflare.com/workers-ai/platform/pricing/",
+    "cloudflare_workers_pricing": "https://developers.cloudflare.com/workers/platform/pricing/",
+    "cloudflare_ai_gateway": "https://developers.cloudflare.com/ai-gateway/",
+    "runpod_serverless_pricing": "https://docs.runpod.io/serverless/pricing"
+  },
+  "application_plane": {
+    "provider": "azure_container_apps",
+    "role": "kovagpt_application_router_tools_billing_and_streaming",
+    "migration_policy": "add_new_providers_behind_existing_abstraction",
+    "delete_existing_azure_deployments": false,
+    "production_routing_authorized": false
+  },
+  "data_and_billing": {
+    "user_data": "supabase",
+    "customer_billing": "stripe",
+    "server_secrets": "azure_key_vault"
+  },
+  "engines": [
+    {
+      "id": "kova-core",
+      "provider": "cloudflare_workers_ai",
+      "purpose": "auto_through_max_single_model_inference",
+      "selection_status": "benchmark_required",
+      "selected_model": null,
+      "paid_execution_authorized": false,
+      "production_routing_authorized": false,
+      "candidate_models": [
+        {
+          "model": "@cf/qwen/qwen3.8-27b",
+          "context_tokens": 262144,
+          "capabilities": ["reasoning", "function_calling", "vision", "streaming"],
+          "input_usd_per_million_tokens": 0.45,
+          "output_usd_per_million_tokens": 3.2
+        },
+        {
+          "model": "@cf/qwen/qwen3-30b-a3b-fp8",
+          "context_tokens": 32768,
+          "capabilities": ["reasoning", "function_calling", "batch"],
+          "input_usd_per_million_tokens": 0.051,
+          "output_usd_per_million_tokens": 0.335
+        },
+        {
+          "model": "@cf/zai-org/glm-5.3-flash",
+          "context_tokens": 1000000,
+          "capabilities": ["reasoning", "function_calling", "vision"],
+          "input_usd_per_million_tokens": 0.15,
+          "output_usd_per_million_tokens": 0.5
+        }
+      ],
+      "benchmark_dimensions": [
+        "latency", "coding", "reasoning", "instruction_following", "tool_calling",
+        "cost", "context_length", "streaming", "hallucination_rate"
+      ],
+      "billing": {
+        "inference_metered_by_usage": true,
+        "free_allocation_neurons_per_day": 10000,
+        "workers_paid_minimum_usd_per_month": 5,
+        "prepaid_ai_gateway_credits_available": true,
+        "satisfies_no_flat_fee_and_no_prepaid_credits": false
+      }
+    },
+    {
+      "id": "kova-ultra",
+      "provider": "runpod_serverless",
+      "purpose": "dynamic_multi_agent_judge_and_synthesis",
+      "worker_type": "flex",
+      "active_workers": 0,
+      "selected_model": null,
+      "paid_execution_authorized": false,
+      "production_routing_authorized": false,
+      "required_stages": ["dynamic_specialists", "disagreement_check", "judge", "synthesis"],
+      "hidden_chain_of_thought_exposed": false
+    }
+  ],
+  "global_guards": {
+    "provider_and_model_are_server_controlled": true,
+    "mode_names_may_not_claim_separate_foundation_weights": true,
+    "activity_events_require_real_runtime_or_tool_events": true,
+    "existing_production_infrastructure_must_not_be_deleted_before_verified_cutover": true,
+    "paid_or_production_actions_authorized": false
+  }
+}
