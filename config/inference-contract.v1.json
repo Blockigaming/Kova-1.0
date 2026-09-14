@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "status": "source_only",
   "transport": "runpod_serverless_queue",
   "engine": "runpod_benchmark_worker_candidate",
@@ -10,7 +10,21 @@
     "allowed_client_message_roles": ["user", "assistant"],
     "caller_supplied_tool_results_allowed": false,
     "allowed_reasoning_efforts": ["low", "medium", "xhigh"],
-    "maximum_output_tokens": 32768
+    "maximum_output_tokens": 32768,
+    "reasoning_effort_and_output_limit_must_match_trusted_stage": true
+  },
+  "trusted_execution_context": {
+    "required": ["route_id", "stage_id", "public_response", "prior_stage_outputs"],
+    "source": "server_router_and_stage_store_only",
+    "prior_stage_outputs": "exact_declared_core_dag_dependencies_only",
+    "artifact_trust": "server_recorded_untrusted_model_output",
+    "trusted_token_recount_after_binding": true
+  },
+  "streaming": {
+    "public_stage_requires_chunk_iterable": true,
+    "private_stage_requires_non_stream_response": true,
+    "assemble_content_tool_calls_and_usage_before_sanitizing": true,
+    "time_to_first_token_source": "worker_monotonic_clock_first_visible_delta"
   },
   "telemetry": {
     "attempt_record_required": ["record_type", "request_id", "attempt_id", "outcome", "model", "model_revision", "route_id", "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start", "reasoning_effort", "worker_start_ms", "model_load_ms", "queue_ms", "inference_ms", "time_to_first_token_ms", "input_tokens", "output_tokens", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],

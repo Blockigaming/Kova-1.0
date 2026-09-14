@@ -96,8 +96,19 @@ if (
 ) throw new Error("inference_must_remain_source_only_and_pinned");
 if (
   inference.request.allowed_client_message_roles.join(",") !== "user,assistant" ||
-  inference.request.caller_supplied_tool_results_allowed !== false
-) throw new Error("caller_tool_results_must_be_rejected");
+  inference.request.caller_supplied_tool_results_allowed !== false ||
+  inference.request.reasoning_effort_and_output_limit_must_match_trusted_stage !== true ||
+  inference.trusted_execution_context.required.join(",") !==
+    "route_id,stage_id,public_response,prior_stage_outputs" ||
+  inference.trusted_execution_context.source !== "server_router_and_stage_store_only" ||
+  inference.trusted_execution_context.prior_stage_outputs !== "exact_declared_core_dag_dependencies_only" ||
+  inference.trusted_execution_context.artifact_trust !== "server_recorded_untrusted_model_output" ||
+  inference.trusted_execution_context.trusted_token_recount_after_binding !== true ||
+  inference.streaming.public_stage_requires_chunk_iterable !== true ||
+  inference.streaming.private_stage_requires_non_stream_response !== true ||
+  inference.streaming.assemble_content_tool_calls_and_usage_before_sanitizing !== true ||
+  inference.streaming.time_to_first_token_source !== "worker_monotonic_clock_first_visible_delta"
+) throw new Error("inference_executor_contract_invalid");
 if (hardware.model !== candidate.base_model || hardware.paid_benchmark_authorized !== false) {
   throw new Error("hardware_benchmark_must_match_candidate_and_stay_blocked");
 }

@@ -1,5 +1,6 @@
 """Build RunPod Kova Core plans without performing network requests."""
 
+from copy import deepcopy
 import json
 from pathlib import Path
 
@@ -23,6 +24,9 @@ STAGE_INSTRUCTIONS = {
     "critic": "Identify concrete defects in the draft without exposing hidden chain-of-thought.",
     "verification": "Return the corrected final answer. Include only conclusions and useful concise explanation.",
 }
+ARTIFACT_PLACEHOLDER_PREFIX = "{{server_stage_output:"
+MAX_ARTIFACT_TEXT_CHARS = 250_000
+MAX_TOTAL_ARTIFACT_TEXT_CHARS = 750_000
 
 
 def _require(condition, message):
@@ -188,3 +192,86 @@ def build_core_plan(value, *, candidate_model, token_counter):
         },
         "operations": operations,
     }
+
+
+def bind_core_operation(plan, stage_id, prior_stage_outputs, *, token_counter):
+    """Bind trusted, server-recorded stage outputs into one immutable Core operation."""
+    _require(isinstance(plan, dict), "Core plan must be an object")
+    _require(isinstance(stage_id, str) and stage_id, "invalid Core stage_id")
+    _require(isinstance(prior_stage_outputs, dict), "prior stage outputs must be an object")
+    _require(callable(token_counter), "trusted token counter missing")
+    operations = plan.get("operations")
+    _require(isinstance(operations, list), "Core plan operations missing")
+    matching = [operation for operation in operations if operation.get("stage_id") == stage_id]
+    _require(len(matching) == 1, "Core stage is not present exactly once")
+    operation = matching[0]
+    dependencies = operation.get("depends_on_stage_ids")
+    _require(isinstance(dependencies, list), "Core stage dependencies missing")
+    _require(set(prior_stage_outputs) == set(dependencies), "prior stage outputs do not match Core DAG")
+
+    total_artifact_chars = 0
+    for dependency in dependencies:
+        output = prior_stage_outputs[dependency]
+        _require(isinstance(output, str) and output, f"invalid prior output for {dependency}")
+        _require(len(output) <= MAX_ARTIFACT_TEXT_CHARS, f"prior output too large for {dependency}")
+        total_artifact_chars += len(output)
+    _require(total_artifact_chars <= MAX_TOTAL_ARTIFACT_TEXT_CHARS, "aggregate prior stage output too large")
+
+    template = deepcopy(operation.get("request_template"))
+    _require(isinstance(template, dict), "Core request template missing")
+    messages = template.get("messages")
+    bindings = template.get("artifact_bindings")
+    _require(isinstance(messages, list) and isinstance(bindings, list), "Core artifact binding contract missing")
+    _require(len(bindings) == len(dependencies), "Core artifact binding count does not match DAG")
+    bound_targets = set()
+    for binding in bindings:
+        _require(isinstance(binding, dict), "invalid Core artifact binding")
+        source = binding.get("source_stage_id")
+        target_index = binding.get("target_message_index")
+        placeholder = binding.get("placeholder")
+        _require(source in prior_stage_outputs, "Core artifact source is not a declared dependency")
+        _require(binding.get("target_field") == "content", "Core artifact target field must be content")
+        _require(binding.get("replace_exact_target_only") is True, "Core artifact binding must be exact-target-only")
+        _require(isinstance(target_index, int) and 0 <= target_index < len(messages), "invalid Core artifact target")
+        _require(target_index not in bound_targets, "duplicate Core artifact target")
+        target = messages[target_index]
+        _require(isinstance(target, dict) and target.get("role") == "assistant", "Core artifact target must be assistant context")
+        content = target.get("content")
+        _require(isinstance(content, str) and isinstance(placeholder, str), "invalid Core artifact placeholder")
+        _require(content.count(placeholder) == 1, "Core artifact placeholder must occur once at its exact target")
+        target["content"] = content.replace(placeholder, prior_stage_outputs[source], 1)
+        bound_targets.add(target_index)
+
+    _require(
+        all(
+            not isinstance(message.get("content"), str) or ARTIFACT_PLACEHOLDER_PREFIX not in message["content"]
+            for message in messages
+        ),
+        "unbound Core artifact placeholder",
+    )
+    bound_input_tokens = token_counter(plan.get("candidate_model"), messages)
+    _require(
+        isinstance(bound_input_tokens, int) and not isinstance(bound_input_tokens, bool) and bound_input_tokens > 0,
+        "invalid trusted bound token count",
+    )
+    _require(bound_input_tokens <= operation.get("maximum_input_tokens", 0), "bound Core input exceeds reserved maximum")
+    candidate = CANDIDATES.get(plan.get("candidate_model"))
+    _require(candidate is not None, "unverified Core candidate")
+    maximum_output_tokens = operation.get("maximum_output_tokens")
+    _require(
+        isinstance(maximum_output_tokens, int) and
+        bound_input_tokens + maximum_output_tokens <= candidate["context_tokens"],
+        "bound Core request exceeds candidate context",
+    )
+
+    request = {
+        "model": template.get("model"),
+        "messages": messages,
+        "max_tokens": maximum_output_tokens,
+        "reasoning_effort": template.get("reasoning_effort"),
+        "chat_template_kwargs": deepcopy(template.get("chat_template_kwargs")),
+        "stream": template.get("stream"),
+    }
+    if request["stream"]:
+        request["stream_options"] = deepcopy(template.get("stream_options"))
+    return request

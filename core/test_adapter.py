@@ -1,6 +1,6 @@
 import unittest
 
-from core.adapter import CANDIDATES, IDENTITY, build_core_plan
+from core.adapter import CANDIDATES, IDENTITY, bind_core_operation, build_core_plan
 
 
 class CoreAdapterTests(unittest.TestCase):
@@ -100,6 +100,29 @@ class CoreAdapterTests(unittest.TestCase):
         self.assertTrue(high["operations"][0]["request_template"]["chat_template_kwargs"]["enable_thinking"])
         self.assertEqual(high["operations"][0]["request_template"]["reasoning_effort"], "xhigh")
         self.assertFalse(high["operations"][0]["request_template"]["chat_template_kwargs"]["preserve_thinking"])
+
+    def test_executor_binds_only_exact_declared_artifact_targets(self):
+        plan = self.build(self.request(route_id="medium"))
+        request = bind_core_operation(
+            plan, "answer-1", {"planning-1": "server-recorded plan"},
+            token_counter=lambda _model, _messages: 110,
+        )
+        joined = "\n".join(message["content"] for message in request["messages"])
+        self.assertIn("UNTRUSTED PRIOR MODEL OUTPUT (planning-1)", joined)
+        self.assertIn("server-recorded plan", joined)
+        self.assertNotIn("{{server_stage_output:", joined)
+        self.assertFalse(request["stream"])
+        self.assertNotIn("stream_options", request)
+
+    def test_executor_rejects_missing_artifacts_and_bound_token_overflow(self):
+        plan = self.build(self.request(route_id="medium"))
+        with self.assertRaisesRegex(ValueError, "do not match Core DAG"):
+            bind_core_operation(plan, "answer-1", {}, token_counter=lambda _model, _messages: 110)
+        with self.assertRaisesRegex(ValueError, "exceeds reserved maximum"):
+            bind_core_operation(
+                plan, "answer-1", {"planning-1": "plan"},
+                token_counter=lambda _model, _messages: 999_999,
+            )
 
     def test_work_routes_bind_distinct_family_behavior(self):
         plans = {}
