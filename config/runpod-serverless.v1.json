@@ -8,7 +8,14 @@
   "idle_timeout_seconds": 5,
   "execution_timeout_seconds": 600,
   "billing": {
+    "account_model": "prepaid_credits",
+    "usage_model": "metered_pay_per_second",
     "compute_billed_per_second": true,
+    "flat_rate_plan": false,
+    "auto_pay_enabled": false,
+    "automatic_credit_reload_allowed": false,
+    "manual_credit_deposit_required": true,
+    "credits_non_refundable": true,
     "billable_phases": ["worker_running", "post_request_idle_timeout"],
     "non_compute_costs": ["container_disk", "network_volume_if_enabled"]
   },

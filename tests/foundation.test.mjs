@@ -47,6 +47,10 @@ test("Runpod plan scales to zero and stays blocked from paid execution", () => {
   const config = JSON.parse(readFileSync(join(root, "config/runpod-serverless.v1.json"), "utf8"));
   assert.equal(config.worker_type, "flex");
   assert.equal(config.active_workers, 0);
+  assert.equal(config.billing.usage_model, "metered_pay_per_second");
+  assert.equal(config.billing.flat_rate_plan, false);
+  assert.equal(config.billing.auto_pay_enabled, false);
+  assert.equal(config.billing.automatic_credit_reload_allowed, false);
   assert.equal(config.safety.paid_execution_authorized, false);
   assert.equal(config.safety.deployment_authorized, false);
 });

@@ -15,6 +15,12 @@ if (stack.status !== "planning_only" || stack.execution_authorized !== false) {
 if (runpod.worker_type !== "flex" || runpod.active_workers !== 0) {
   throw new Error("runpod_must_scale_to_zero");
 }
+if (runpod.billing.usage_model !== "metered_pay_per_second" || runpod.billing.flat_rate_plan !== false) {
+  throw new Error("runpod_must_use_metered_billing");
+}
+if (runpod.billing.auto_pay_enabled !== false || runpod.billing.automatic_credit_reload_allowed !== false) {
+  throw new Error("automatic_credit_reload_must_be_disabled");
+}
 if (runpod.safety.paid_execution_authorized !== false || runpod.safety.deployment_authorized !== false) {
   throw new Error("runpod_paid_actions_must_be_blocked");
 }

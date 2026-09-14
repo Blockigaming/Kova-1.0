@@ -30,6 +30,12 @@ workers with zero active workers so inference can scale to zero. Startup, reques
 execution, the post-request idle timeout, storage, retries, payment processing, and
 applicable usage taxes must all be measured before customer prices are published.
 
+RunPod's standard account billing is prepaid-credit based even though Serverless
+compute is metered per second. This plan explicitly disables auto-pay and automatic
+credit reloads: there is no flat-rate compute plan, but a manual prepaid balance is
+still required by RunPod. Deposited credits are non-refundable. A true standard
+postpaid card charge after usage is not represented as supported.
+
 The target gross margin is 42.6%, using:
 
 ```text
