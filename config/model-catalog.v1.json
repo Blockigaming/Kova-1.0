@@ -12,8 +12,10 @@
     {
       "id": "kova-5.6-cosmo",
       "display_name": "Kova 5.6 Cosmo",
-      "upstream_model": null,
-      "verification": "blocked_no_verified_qwen3.8_7b_checkpoint",
+      "upstream_model": "Qwen/Qwen3.8-27B-FP8",
+      "upstream_revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+      "license": "Apache-2.0",
+      "verification": "upstream_verified_hardware_benchmark_blocked",
       "deployment_ready": false
     },
     {
