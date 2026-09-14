@@ -59,7 +59,11 @@ if (
 if (inference.model !== candidate.base_model || inference.model_revision !== candidate.base_revision) {
   throw new Error("inference_model_must_match_pinned_candidate");
 }
-if (inference.safety.paid_execution_authorized !== false || inference.safety.accept_arbitrary_model_from_request !== false) {
+if (
+  inference.safety.paid_execution_authorized !== false ||
+  inference.safety.accept_arbitrary_model_from_request !== false ||
+  inference.safety.return_hidden_reasoning !== false
+) {
   throw new Error("inference_must_remain_source_only_and_pinned");
 }
 if (hardware.model !== candidate.base_model || hardware.paid_benchmark_authorized !== false) {
@@ -112,7 +116,7 @@ for (const model of catalog.models) {
     throw new Error(`unverified_model_enabled:${model.id}`);
   }
   if (model.deployment_ready === true) {
-    if (!model.upstream_revision || !/^[a-f0-9]{40}$/u.test(model.upstream_revision) || model.license !== "Apache-2.0") {
+    if (model.upstream_model !== candidate.base_model || model.upstream_revision !== candidate.base_revision || model.license !== candidate.base_license) {
       throw new Error(`deployment_ready_model_missing_verified_metadata:${model.id}`);
     }
   }
