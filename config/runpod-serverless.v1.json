@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "status": "planning_only",
+  "provider": "runpod-serverless",
+  "worker_type": "flex",
+  "active_workers": 0,
+  "max_workers": 1,
+  "idle_timeout_seconds": 5,
+  "execution_timeout_seconds": 600,
+  "billing": {
+    "compute_billed_per_second": true,
+    "billable_phases": ["worker_running", "post_request_idle_timeout"],
+    "non_compute_costs": ["container_disk", "network_volume_if_enabled"]
+  },
+  "model_storage": {
+    "strategy": "runpod_cached_model",
+    "network_volume_enabled": false
+  },
+  "safety": {
+    "paid_execution_authorized": false,
+    "deployment_authorized": false,
+    "production_routing_authorized": false,
+    "require_pinned_model_revision": true,
+    "require_measured_cold_start_cost": true,
+    "require_measured_token_throughput": true
+  }
+}

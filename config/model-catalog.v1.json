@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "status": "verification_in_progress",
+  "default_model": "kova-auto",
+  "models": [
+    {
+      "id": "kova-auto",
+      "display_name": "Kova",
+      "routing": "automatic",
+      "deployment_ready": false
+    },
+    {
+      "id": "kova-5.6-cosmo",
+      "display_name": "Kova 5.6 Cosmo",
+      "upstream_model": null,
+      "verification": "blocked_no_verified_qwen3.8_7b_checkpoint",
+      "deployment_ready": false
+    },
+    {
+      "id": "kova-5.6-orion",
+      "display_name": "Kova 5.6 Orion",
+      "upstream_model": "Qwen/Qwen3.8-27B",
+      "upstream_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+      "license": "Apache-2.0",
+      "reasoning_efforts": {
+        "Light": "low",
+        "Medium": "medium",
+        "High": "xhigh",
+        "Extra High": "xhigh",
+        "Max": "xhigh",
+        "Ultra": "xhigh"
+      },
+      "note": "High through Ultra require separate measured token and time budgets; they are not separate quantized models.",
+      "deployment_ready": false
+    },
+    {
+      "id": "kova-5.6-nova",
+      "display_name": "Kova 5.6 Nova",
+      "upstream_model": null,
+      "verification": "blocked_no_verified_open_weight_qwen3.8_max_checkpoint",
+      "deployment_ready": false
+    }
+  ]
+}

@@ -9,6 +9,7 @@
     "dataset:compile": "node scripts/compile-dataset.mjs",
     "training:command": "node scripts/training-command.mjs",
     "training:execute": "node scripts/training-command.mjs --execute",
+    "pricing:floor": "node scripts/price-floor.mjs",
     "preflight": "npm run validate:data && npm run validate:stack",
     "test": "node --test tests/*.test.mjs"
   }

@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "currency": "USD",
+  "target_gross_margin": 0.426,
+  "cost_fraction": 0.574,
+  "formula": "customer_price = attributable_cost / (1 - target_gross_margin)",
+  "attributable_costs": [
+    "worker_start_and_load_compute",
+    "request_execution_compute",
+    "post_request_idle_compute",
+    "model_and_container_storage",
+    "payment_processing",
+    "retries_and_failed_jobs",
+    "applicable_usage_taxes"
+  ],
+  "enforcement": {
+    "pricing_status": "blocked_until_benchmarked",
+    "require_per_model_benchmark": true,
+    "require_per_effort_benchmark": true,
+    "require_usage_telemetry": true,
+    "require_periodic_recalibration": true,
+    "allow_unmeasured_price_publication": false
+  }
+}

@@ -23,6 +23,27 @@ npm run training:command
 
 Passing these checks does not authorize GPU spending, training, deployment, or a production model replacement.
 
+## RunPod Serverless plan
+
+The checked-in RunPod configuration is planning-only and fail-closed. It uses Flex
+workers with zero active workers so inference can scale to zero. Startup, request
+execution, the post-request idle timeout, storage, retries, payment processing, and
+applicable usage taxes must all be measured before customer prices are published.
+
+The target gross margin is 42.6%, using:
+
+```text
+customer price = attributable cost / 0.574
+```
+
+This formula targets 42.6% before rounding. Realized margin must be measured from
+actual usage and recalibrated; it cannot be guaranteed from GPU list prices alone.
+
+The public catalog reserves the Kova, Kova 5.6 Cosmo, Kova 5.6 Orion, and Kova 5.6
+Nova names. Only the pinned Qwen3.8-27B Orion candidate is currently verified.
+Cosmo and Nova remain blocked until exact upstream checkpoints, revisions, licenses,
+and hardware requirements are verified.
+
 The dataset compiler creates immutable, hashed ms-swift train and validation files.
 The training command is a dry run by default and its execution path remains blocked
 until cost authorization and single-GPU compatibility are separately verified.
