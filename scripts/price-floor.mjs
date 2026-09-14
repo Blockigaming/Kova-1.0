@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { pathToFileURL } from "node:url";
+
 const TARGET_MARGIN = 0.426;
 
 function parseCost(raw) {
@@ -24,7 +26,7 @@ export function realizedMargin(cost, price) {
   return (price - cost) / price;
 }
 
-if (process.argv[1] && import.meta.url === new URL(`file://${process.argv[1]}`).href) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const cost = parseCost(process.argv[2]);
     const price = requiredPrice(cost);
