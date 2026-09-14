@@ -13,9 +13,10 @@ Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are 
 - Paid training disabled
 - No trained Kova checkpoint exists yet
 - No KovaGPT production routing has changed
-- Progress is 18% under the product-complete definition; zero of 25 target routes are live
+- Progress is 20% under the product-complete definition; zero of 25 target routes are live
 - Deterministic Kova Auto baseline implemented with Free-plan and Ultra-budget gates
 - Source-only Cloudflare Core multi-pass request planner and benchmark summarizer implemented
+- Source-only Ultra specialist, judge, conditional-debate, and synthesis planner implemented
 
 ## Product-complete target
 

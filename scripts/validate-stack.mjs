@@ -3,14 +3,14 @@ import { readFile } from "node:fs/promises";
 const load = async (name) => JSON.parse(await readFile(new URL(`../config/${name}`, import.meta.url)));
 const [
   candidate, stack, runpod, catalog, economics, identity, inference, hardware, surface,
-  activity, completion, evaluations, nova, cosmo, architecture, routes,
+  activity, completion, evaluations, nova, cosmo, architecture, routes, ultraPlan,
 ] = await Promise.all([
   "candidate.v1.json", "training-stack.v1.json", "runpod-serverless.v1.json",
   "model-catalog.v1.json", "economics.v1.json", "identity.v1.json",
   "inference-contract.v1.json", "hardware-benchmark.v1.json", "product-surface.v1.json",
   "activity-event.v1.json", "completion-target.v1.json", "evaluation-gates.v1.json",
   "nova-candidate.v1.json", "cosmo-candidate.v1.json", "provider-architecture.v1.json",
-  "route-policy.v1.json",
+  "route-policy.v1.json", "ultra-orchestration.v1.json",
 ].map(load));
 
 if (candidate.base_model !== "Qwen/Qwen3.8-27B" || !/^[a-f0-9]{40}$/u.test(candidate.base_revision)) {
@@ -108,6 +108,16 @@ if (
   ultra.paid_execution_authorized !== false || ultra.production_routing_authorized !== false ||
   ultra.hidden_chain_of_thought_exposed !== false
 ) throw new Error("ultra_must_be_unselected_scale_to_zero_and_blocked");
+if (
+  ultraPlan.status !== "source_only" || ultraPlan.engine !== "kova-ultra" ||
+  ultraPlan.provider !== "runpod_serverless" || ultraPlan.worker_type !== "flex" ||
+  ultraPlan.active_workers !== 0 || ultraPlan.required_entitlement !== "pro" ||
+  ultraPlan.minimum_specialists !== 2 || ultraPlan.maximum_specialists !== 5 ||
+  ultraPlan.maximum_debate_rounds !== 1 || ultraPlan.selected_model !== null ||
+  ultraPlan.hidden_chain_of_thought_exposed !== false ||
+  ultraPlan.paid_execution_authorized !== false || ultraPlan.deployment_authorized !== false ||
+  ultraPlan.production_routing_authorized !== false
+) throw new Error("ultra_orchestration_must_be_bounded_and_blocked");
 
 const expectedChatModes = ["instant", "medium", "high", "extra-high", "max", "ultra"];
 if (
@@ -162,7 +172,7 @@ if (surface.deep_mode_experience.hidden_chain_of_thought_exposed !== false || ac
 if (activity.rules.must_follow_real_runtime_or_tool_event !== true || activity.rules.may_claim_unstarted_action !== false) {
   throw new Error("activity_must_be_truthfully_grounded");
 }
-if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 18 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
+if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 20 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
   throw new Error("completion_progress_contract_mismatch");
 }
 if (
