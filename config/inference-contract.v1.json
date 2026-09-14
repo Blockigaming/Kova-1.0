@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "status": "source_only",
+  "transport": "runpod_serverless_queue",
+  "engine": "vllm_openai_compatible",
+  "model": "Qwen/Qwen3.8-27B",
+  "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "request": {
+    "required": ["request_id", "messages", "reasoning_effort", "max_output_tokens"],
+    "allowed_reasoning_efforts": ["low", "medium", "xhigh"],
+    "maximum_output_tokens": 32768
+  },
+  "response_usage": {
+    "required": ["request_id", "cold_start", "worker_start_ms", "model_load_ms", "queue_ms", "inference_ms", "idle_timeout_ms", "input_tokens", "output_tokens", "gpu_rate_per_second_usd"]
+  },
+  "safety": {
+    "accept_arbitrary_model_from_request": false,
+    "return_hidden_reasoning": false,
+    "require_request_id": true,
+    "paid_execution_authorized": false
+  }
+}
