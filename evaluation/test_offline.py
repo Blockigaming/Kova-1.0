@@ -46,6 +46,14 @@ class OfflineEvaluationTests(unittest.TestCase):
         }
         self.assertIn("forbidden_response_pattern:<think", validate_response_artifact(hidden))
         self.assertTrue(any(item.startswith("ungrounded_source_url:") for item in validate_response_artifact(fabricated)))
+        empty_disclosure = {
+            "text": "arbitrary response", "identity_requested": False,
+            "provider_disclosure_requested": True, "selected_provider": "",
+            "selected_upstream_model": "", "tool_claims": [],
+            "runtime_tool_results": [], "user_source_urls": [],
+        }
+        self.assertIn("selected_provider_missing", validate_response_artifact(empty_disclosure))
+        self.assertIn("selected_upstream_model_missing", validate_response_artifact(empty_disclosure))
 
     def test_activity_evaluator_requires_real_started_operation(self):
         events = [{
@@ -68,6 +76,8 @@ class OfflineEvaluationTests(unittest.TestCase):
         }]
         self.assertIn("event_1_precedes_runtime_start", validate_activity_events("high", events, runtime))
         self.assertIn("route_forbids_activity", validate_activity_events("instant", events, runtime))
+        timezone_less_runtime = [{**runtime[0], "started_at": "2026-09-14T00:00:00"}]
+        self.assertIn("event_1_invalid_runtime_start", validate_activity_events("high", events, timezone_less_runtime))
 
     def test_complete_offline_suite_passes_without_releasing_routes(self):
         report = run_offline_suite()

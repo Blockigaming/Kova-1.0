@@ -10,7 +10,7 @@
     "training:command": "node scripts/training-command.mjs",
     "training:execute": "node scripts/training-command.mjs --execute",
     "pricing:floor": "node scripts/price-floor.mjs",
-    "benchmark:summarize": "node scripts/summarize-benchmark.mjs",
+    "benchmark:candidate:summarize": "node scripts/summarize-benchmark.mjs",
     "benchmark:core:summarize": "node scripts/summarize-core-benchmark.mjs",
     "evaluate:offline": "python3 -m evaluation.offline",
     "preflight": "npm run validate:data && npm run validate:stack && npm run evaluate:offline",

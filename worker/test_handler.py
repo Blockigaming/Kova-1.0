@@ -6,6 +6,7 @@ from worker.handler import (
     MODEL_REVISION,
     TRUSTED_SYSTEM_IDENTITY,
     build_engine_request,
+    emit_lifecycle_close,
     handle_job,
 )
 
@@ -19,6 +20,8 @@ class Clock:
 
 
 class HandlerTests(unittest.TestCase):
+    digest = "sha256:" + "a" * 64
+
     def request(self, **overrides):
         value = {
             "request_id": "request-1",
@@ -33,14 +36,32 @@ class HandlerTests(unittest.TestCase):
         value = {
             "source": "server_provider_runtime",
             "cold_start": False,
+            "worker_lifecycle_id": "lifecycle-1",
             "worker_start_ms": 0,
             "model_load_ms": 0,
             "queue_ms": 2,
-            "idle_timeout_ms": 5000,
             "gpu_rate_per_second_usd": 0.001,
+            "gpu_type_id": "NVIDIA A100 80GB PCIe",
+            "gpu_count": 1,
+            "serving_engine": "vllm",
+            "endpoint_type": "queue_based",
+            "container_image_digest": self.digest,
+            "time_to_first_token_ms": 0,
         }
         value.update(overrides)
-        return lambda: value
+
+        def probe(phase):
+            measured = dict(value)
+            if phase == "before":
+                measured.pop("time_to_first_token_ms")
+            return measured
+
+        return probe
+
+    def execution_context(self, **overrides):
+        value = {"route_id": "instant", "stage_id": "answer-1", "public_response": True}
+        value.update(overrides)
+        return value
 
     def response(self, **message_overrides):
         message = {"content": "answer", **message_overrides}
@@ -56,6 +77,7 @@ class HandlerTests(unittest.TestCase):
             lambda _payload: response or self.response(),
             self.runtime_probe(),
             records.append,
+            execution_context=self.execution_context(),
             clock_ns=Clock(0, 50_000_000),
             attempt_id_factory=lambda: "server-attempt-1",
             **kwargs,
@@ -66,6 +88,8 @@ class HandlerTests(unittest.TestCase):
         payload = build_engine_request(self.request())
         self.assertEqual(payload["model"], MODEL)
         self.assertEqual(payload["messages"][0], {"role": "system", "content": TRUSTED_SYSTEM_IDENTITY})
+        self.assertTrue(payload["stream"])
+        self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
 
     def test_caller_cannot_select_model_system_prompt_or_extra_fields(self):
         with self.assertRaisesRegex(ValueError, "server-controlled"):
@@ -90,6 +114,18 @@ class HandlerTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "max_output_tokens"):
             build_engine_request(self.request(max_output_tokens=32769))
 
+    def test_execution_context_must_match_real_core_stage(self):
+        with self.assertRaisesRegex(ValueError, "route DAG"):
+            handle_job(
+                {"input": self.request()}, lambda _payload: self.response(), self.runtime_probe(), list().append,
+                execution_context=self.execution_context(public_response=False),
+            )
+        with self.assertRaisesRegex(ValueError, "reasoning_effort does not match"):
+            handle_job(
+                {"input": self.request(reasoning_effort="medium")}, lambda _payload: self.response(),
+                self.runtime_probe(), list().append, execution_context=self.execution_context(),
+            )
+
     def test_remote_multimodal_content_is_blocked(self):
         with self.assertRaisesRegex(ValueError, "only text"):
             build_engine_request(self.request(messages=[{
@@ -109,6 +145,7 @@ class HandlerTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "hidden reasoning"):
                     handle_job(
                         {"input": self.request()}, lambda _payload: response, self.runtime_probe(), records.append,
+                        execution_context=self.execution_context(),
                         clock_ns=Clock(0, 10_000_000), attempt_id_factory=lambda: "failed-attempt",
                     )
                 self.assertEqual(records[0]["outcome"], "failed")
@@ -123,6 +160,7 @@ class HandlerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "provider failed"):
             handle_job(
                 {"input": self.request()}, explode, self.runtime_probe(), records.append,
+                execution_context=self.execution_context(),
                 clock_ns=Clock(0, 25_000_000), attempt_id_factory=lambda: "failed-attempt",
             )
         self.assertEqual(records[0]["outcome"], "failed")
@@ -138,6 +176,7 @@ class HandlerTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, pattern):
                     handle_job(
                         {"input": self.request()}, lambda _payload: response, self.runtime_probe(), records.append,
+                        execution_context=self.execution_context(),
                         clock_ns=Clock(0, 1), attempt_id_factory=lambda: "failed-attempt",
                     )
                 self.assertEqual(records[0]["outcome"], "failed")
@@ -152,7 +191,8 @@ class HandlerTests(unittest.TestCase):
         records = []
         result = handle_job(
             {"input": self.request(reasoning_effort="medium")}, lambda _payload: self.response(),
-            self.runtime_probe(cold_start=True), records.append,
+            self.runtime_probe(cold_start=True, worker_start_ms=10, model_load_ms=20), records.append,
+            execution_context=self.execution_context(route_id="medium", stage_id="verification-1"),
             clock_ns=Clock(100_000_000, 175_000_000), attempt_id_factory=lambda: "server-attempt-1",
         )
         benchmark = result["benchmark"]
@@ -162,19 +202,49 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(benchmark["model_revision"], MODEL_REVISION)
         self.assertEqual(benchmark["inference_ms"], 75)
         self.assertEqual(benchmark["measurement_source"], "server_provider_runtime")
+        self.assertEqual(benchmark["record_type"], "attempt")
+        self.assertEqual(benchmark["route_id"], "medium")
+        self.assertEqual(benchmark["worker_lifecycle_id"], "lifecycle-1")
+
+    def test_lifecycle_close_emits_idle_tail_for_core_summarizer(self):
+        records = []
+        close_probe = lambda: {
+            "source": "server_provider_runtime",
+            "worker_lifecycle_id": "lifecycle-1",
+            "attributed_idle_timeout_ms": 5000,
+            "gpu_rate_per_second_usd": 0.001,
+            "gpu_type_id": "NVIDIA A100 80GB PCIe",
+            "gpu_count": 1,
+            "serving_engine": "vllm",
+            "endpoint_type": "queue_based",
+            "container_image_digest": self.digest,
+        }
+        record = emit_lifecycle_close(
+            close_probe, records.append, close_event_id_factory=lambda: "close-1",
+        )
+        self.assertEqual(record, records[0])
+        self.assertEqual(record["record_type"], "lifecycle_close")
+        self.assertEqual(record["attributed_idle_timeout_ms"], 5000)
+        with self.assertRaisesRegex(ValueError, "attributed_idle_timeout_ms"):
+            emit_lifecycle_close(lambda: {**close_probe(), "attributed_idle_timeout_ms": 0}, list().append)
 
     def test_job_telemetry_is_rejected_and_runtime_probe_is_required(self):
         with self.assertRaisesRegex(ValueError, "only input"):
             handle_job(
                 {"input": self.request(), "telemetry": {"gpu_rate_per_second_usd": 0.000001}},
                 lambda _payload: self.response(), self.runtime_probe(), list().append,
+                execution_context=self.execution_context(),
             )
         with self.assertRaisesRegex(ValueError, "runtime probe"):
-            handle_job({"input": self.request()}, lambda _payload: self.response(), None, list().append)
+            handle_job(
+                {"input": self.request()}, lambda _payload: self.response(), None, list().append,
+                execution_context=self.execution_context(),
+            )
         with self.assertRaisesRegex(ValueError, "measurement source"):
             handle_job(
                 {"input": self.request()}, lambda _payload: self.response(),
                 self.runtime_probe(source="caller"), list().append,
+                execution_context=self.execution_context(),
             )
 
     def test_zero_runtime_rate_fails_closed(self):
@@ -182,6 +252,7 @@ class HandlerTests(unittest.TestCase):
             handle_job(
                 {"input": self.request()}, lambda _payload: self.response(),
                 self.runtime_probe(gpu_rate_per_second_usd=0), list().append,
+                execution_context=self.execution_context(),
             )
 
 

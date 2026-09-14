@@ -48,6 +48,8 @@ class CoreAdapterTests(unittest.TestCase):
         )
         binding = plan["operations"][1]["request_template"]["artifact_bindings"][0]
         messages = plan["operations"][1]["request_template"]["messages"]
+        self.assertEqual(messages[binding["target_message_index"]]["role"], "assistant")
+        self.assertIn("UNTRUSTED PRIOR MODEL OUTPUT", messages[binding["target_message_index"]]["content"])
         self.assertIn(binding["placeholder"], messages[binding["target_message_index"]]["content"])
         self.assertTrue(binding["replace_exact_target_only"])
         self.assertTrue(plan["operations"][1]["request_template"]["reject_placeholder_outside_binding_targets"])

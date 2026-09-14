@@ -28,6 +28,7 @@ if (
   runpod.physical_endpoint_count !== 2 || runpod.endpoints.length !== 2 ||
   runpod.endpoints.map((endpoint) => endpoint.id).join(",") !== "kova-core,kova-ultra" ||
   runpod.endpoints.some((endpoint) =>
+    endpoint.name_reserved !== endpoint.id ||
     endpoint.deployed !== false || endpoint.worker_type !== "flex" || endpoint.active_workers !== 0 ||
     endpoint.max_workers !== 1 || endpoint.flashboot_required !== true ||
     endpoint.cached_model_required !== true || endpoint.streaming_required !== true
@@ -76,9 +77,18 @@ if (
 if (inference.model !== candidate.base_model || inference.model_revision !== candidate.base_revision) {
   throw new Error("benchmark_worker_must_match_pinned_candidate");
 }
-for (const field of ["attempt_id", "outcome", "model", "model_revision", "measurement_source", "cold_start", "gpu_rate_per_second_usd"]) {
-  if (!inference.response_usage.required.includes(field)) throw new Error(`inference_telemetry_missing:${field}`);
+for (const field of [
+  "record_type", "request_id", "attempt_id", "outcome", "model", "model_revision", "route_id",
+  "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start",
+  "time_to_first_token_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count",
+  "serving_engine", "endpoint_type", "container_image_digest",
+]) {
+  if (!inference.telemetry.attempt_record_required.includes(field)) throw new Error(`inference_attempt_telemetry_missing:${field}`);
 }
+for (const field of ["record_type", "close_event_id", "worker_lifecycle_id", "attributed_idle_timeout_ms"]) {
+  if (!inference.telemetry.lifecycle_close_record_required.includes(field)) throw new Error(`inference_lifecycle_telemetry_missing:${field}`);
+}
+if (inference.telemetry.lifecycle_close_source !== "trusted_runtime_shutdown_observation") throw new Error("trusted_lifecycle_close_required");
 if (
   inference.safety.paid_execution_authorized !== false ||
   inference.safety.accept_arbitrary_model_from_request !== false ||
@@ -132,6 +142,7 @@ if (
   coreServing.selected_candidate_id !== null || coreServing.selected_gpu !== null ||
   coreServing.container_image_digest !== null || coreServing.native_context_tokens !== 262144 ||
   coreServing.reasoning_efforts.join(",") !== "low,medium,xhigh" ||
+  coreServing.endpoint_type_candidates.join(",") !== "queue_based,load_balancing" ||
   coreServing.container_policy.prebuilt_image_required !== true ||
   coreServing.container_policy.runtime_package_installs_allowed !== false ||
   coreServing.container_policy.streaming_required !== true ||
@@ -155,6 +166,7 @@ if (
   ultraPlan.active_workers !== 0 || ultraPlan.required_entitlement !== "pro" ||
   ultraPlan.minimum_specialists !== 2 || ultraPlan.maximum_specialists !== 5 ||
   ultraPlan.maximum_debate_rounds !== 1 || ultraPlan.selected_model !== null ||
+  ultraPlan.required_stages.join(",") !== "specialists,disagreement_check,judge,conditional_debate,synthesis" ||
   ultraPlan.hidden_chain_of_thought_exposed !== false ||
   ultraPlan.paid_execution_authorized !== false || ultraPlan.deployment_authorized !== false ||
   ultraPlan.production_routing_authorized !== false

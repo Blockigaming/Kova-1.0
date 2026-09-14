@@ -21,7 +21,7 @@ Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are 
 - Progress is 22% under the product-complete definition; zero of 25 target routes are live
 - Deterministic Kova Auto baseline implemented with Free-plan and Ultra-budget gates
 - Source-only RunPod Core multi-pass request planner and lifecycle-cost summarizer implemented
-- Source-only Ultra specialist, judge, conditional-debate, and synthesis planner implemented
+- Source-only Ultra specialist, disagreement-check, judge, conditional-debate, and synthesis planner implemented
 - Reproducible offline contract evaluation covers all 25 target routes without provider calls
 
 ## Product-complete target
@@ -47,18 +47,21 @@ npm run training:command
 
 Passing these checks does not authorize GPU spending, training, deployment, or a production model replacement.
 
-`npm run benchmark:summarize -- benchmark.json` converts measured cold and warm
-worker telemetry into actual compute cost and cold-start percentage. It never calls
-RunPod. Pricing remains blocked until real endpoint samples exist.
+`npm run benchmark:candidate:summarize -- benchmark.json` summarizes isolated
+model-candidate attempts only. It explicitly cannot claim Core or Ultra route
+completion and cannot support customer route pricing. It never calls RunPod.
 
 `npm run benchmark:core:summarize -- core-benchmark.json` prices complete recorded
-RunPod worker lifecycles and separates results by pinned model revision and Kova
-route. It requires one cold-start and one shutdown-tail attribution per lifecycle,
-so retries do not strand cost in another benchmark group. It reports RunPod compute
+RunPod worker lifecycles and separates results by pinned model revision, GPU type
+and count, serving engine, endpoint type, container digest, and Kova route. A
+shutdown observation is recorded separately from request attempts. It requires one
+measured cold start and one measured shutdown tail per lifecycle, then shares that
+overhead equally across the logical requests served during the lifecycle. This lets
+one warm Core worker serve different routes without losing or duplicating cost. It reports RunPod compute
 only, not a publishable customer price; Azure, tools, storage, payment processing,
 taxes, and other attributable costs must still be included.
 The request planner also requires a trusted provider tokenizer count, binds only
-server-produced private stage artifacts, reserves their worst-case token ceilings,
+server-recorded but untrusted prior model artifacts, reserves their worst-case token ceilings,
 and rejects any operation whose bound prompt plus output ceiling could exceed the
 candidate context. The executor must recount the fully bound request before inference.
 

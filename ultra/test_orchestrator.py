@@ -37,7 +37,10 @@ class UltraPlannerTests(unittest.TestCase):
     def test_judge_debate_and_synthesis_have_real_dependencies(self):
         plan = self.build(self.request("Research competitors and compare market pricing."), max_agents=3)
         by_id = {operation["id"]: operation for operation in plan["operations"]}
-        self.assertEqual(len(by_id["judge"]["depends_on"]), 3)
+        self.assertIn("disagreement-check", by_id)
+        self.assertEqual(len(by_id["disagreement-check"]["depends_on"]), 3)
+        self.assertEqual(len(by_id["judge"]["depends_on"]), 4)
+        self.assertIn("disagreement-check", by_id["judge"]["depends_on"])
         self.assertEqual(by_id["debate-round-1"]["condition"], "judge_detected_material_disagreement")
         self.assertIn("debate-round-1", by_id["synthesis"]["depends_on"])
         self.assertNotIn("debate-round-1_if_executed", by_id["synthesis"]["depends_on"])
@@ -84,6 +87,8 @@ class UltraPlannerTests(unittest.TestCase):
             )
             for binding in operation["input_template"]["artifact_bindings"]:
                 self.assertIn(binding["placeholder"], messages[binding["target_message_index"]]["content"])
+                self.assertEqual(messages[binding["target_message_index"]]["role"], "assistant")
+                self.assertIn("UNTRUSTED PRIOR MODEL OUTPUT", messages[binding["target_message_index"]]["content"])
                 self.assertTrue(binding["replace_exact_target_only"])
             self.assertTrue(operation["input_template"]["reject_placeholder_outside_binding_targets"])
 

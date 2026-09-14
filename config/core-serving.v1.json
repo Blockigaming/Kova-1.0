@@ -9,6 +9,7 @@
   "native_context_tokens": 262144,
   "reasoning_efforts": ["low", "medium", "xhigh"],
   "serving_engine_candidates": ["vllm", "sglang"],
+  "endpoint_type_candidates": ["queue_based", "load_balancing"],
   "selected_serving_engine": null,
   "selected_candidate_id": null,
   "selected_gpu": null,

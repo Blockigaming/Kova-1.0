@@ -35,7 +35,7 @@
     "source_only_runpod_core_multi_pass_request_planner_is_tested",
     "runpod_core_compute_cost_and_latency_summarizer_is_tested",
     "worker_records_server_measured_success_and_failure_attempt_telemetry",
-    "source_only_ultra_dynamic_specialist_judge_debate_and_synthesis_planner_is_tested",
+    "source_only_ultra_dynamic_specialist_disagreement_check_judge_debate_and_synthesis_planner_is_tested",
     "all_25_route_contracts_have_reproducible_offline_plan_validation",
     "response_identity_disclosure_and_grounding_evaluator_is_tested",
     "activity_events_require_a_matching_started_runtime_operation",

@@ -11,7 +11,7 @@
   "minimum_specialists": 2,
   "maximum_specialists": 5,
   "maximum_debate_rounds": 1,
-  "required_stages": ["specialists", "judge", "conditional_debate", "synthesis"],
+  "required_stages": ["specialists", "disagreement_check", "judge", "conditional_debate", "synthesis"],
   "conditional_debate_trigger": "judge_detected_material_disagreement",
   "activity_policy": "emit_only_after_corresponding_runtime_operation_starts",
   "hidden_chain_of_thought_exposed": false,

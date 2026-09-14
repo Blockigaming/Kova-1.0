@@ -2,7 +2,7 @@
 
 import json
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from core.adapter import CANDIDATES, build_core_plan
@@ -154,6 +154,9 @@ def _validate_ultra_plan(contract):
     _require(plan["production_ready"] is False and plan["model_selection_required"] is True, "Ultra must stay blocked")
     operation_ids = {operation["id"] for operation in plan["operations"]}
     _require(len(operation_ids) == len(plan["operations"]), "Ultra operation IDs must be unique")
+    _require("disagreement-check" in operation_ids, "Ultra disagreement-check stage missing")
+    by_id = {operation["id"]: operation for operation in plan["operations"]}
+    _require("disagreement-check" in by_id["judge"]["depends_on"], "Ultra judge must follow disagreement check")
     for operation in plan["operations"]:
         _require(set(operation["depends_on"]).issubset(operation_ids), "Ultra dependency references missing operation")
         bindings = operation["input_template"]["artifact_bindings"]
@@ -181,9 +184,9 @@ def validate_response_artifact(artifact):
     if artifact.get("provider_disclosure_requested"):
         provider = artifact.get("selected_provider")
         model = artifact.get("selected_upstream_model")
-        if not isinstance(provider, str) or provider.lower() not in lowered:
+        if not isinstance(provider, str) or not provider.strip() or provider.lower() not in lowered:
             violations.append("selected_provider_missing")
-        if not isinstance(model, str) or model.lower() not in lowered:
+        if not isinstance(model, str) or not model.strip() or model.lower() not in lowered:
             violations.append("selected_upstream_model_missing")
     for pattern in FORBIDDEN_RESPONSE_PATTERNS:
         if pattern in lowered:
@@ -219,8 +222,10 @@ def validate_response_artifact(artifact):
 def _timestamp(value):
     _require(isinstance(value, str), "timestamp must be text")
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError as error:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        _require(parsed.tzinfo is not None and parsed.utcoffset() is not None, "activity timestamp must include timezone")
+        return parsed.astimezone(timezone.utc)
+    except (TypeError, ValueError) as error:
         raise ValueError("invalid activity timestamp") from error
 
 
