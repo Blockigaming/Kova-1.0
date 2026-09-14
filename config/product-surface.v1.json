@@ -7,7 +7,7 @@
     "display_name": "Kova Auto",
     "selection": "server_authoritative",
     "eligible_engines": ["kova-core", "kova-ultra"],
-    "classifier_implemented": false,
+    "classifier_implemented": true,
     "deployment_ready": false
   },
   "chat_modes": [

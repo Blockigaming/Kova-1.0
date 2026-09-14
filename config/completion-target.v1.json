@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "baseline_percent": 0,
-  "current_verified_percent": 15,
+  "current_verified_percent": 18,
   "live_model_routes": 0,
   "target_model_routes": 25,
   "definition_of_100_percent": [
@@ -31,6 +31,10 @@
     "verified_nova_upstream_checkpoint_and_license_are_pinned",
     "two_engine_provider_architecture_is_source_defined",
     "server_authoritative_chat_and_work_route_policy_is_tested",
+    "deterministic_kova_auto_classifier_has_plan_and_ultra_budget_gates",
+    "source_only_cloudflare_core_multi_pass_request_planner_is_tested",
+    "cloudflare_core_token_cost_and_latency_summarizer_is_tested",
+    "worker_records_server_measured_success_and_failure_attempt_telemetry",
     "cloudflare_core_model_selection_remains_benchmark_blocked",
     "source_only_worker_contract_exists",
     "billing_and_deployment_are_fail_closed",

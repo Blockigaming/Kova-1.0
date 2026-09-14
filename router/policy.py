@@ -47,7 +47,7 @@ def resolve_route(request):
 
     if surface == "chat":
         route_id = request.get("route_id")
-        _require(route_id != "kova-auto", "auto classifier is not implemented")
+        _require(route_id != "kova-auto", "auto requires server classifier context")
         _require(route_id in CHAT_POLICIES, "invalid chat route")
         return {"surface": "chat", "route_id": route_id, **deepcopy(CHAT_POLICIES[route_id])}
 

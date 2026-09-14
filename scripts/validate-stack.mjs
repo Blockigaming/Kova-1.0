@@ -63,7 +63,7 @@ if (
 if (inference.model !== candidate.base_model || inference.model_revision !== candidate.base_revision) {
   throw new Error("benchmark_worker_must_match_pinned_candidate");
 }
-for (const field of ["attempt_id", "outcome", "cold_start", "gpu_rate_per_second_usd"]) {
+for (const field of ["attempt_id", "outcome", "model", "model_revision", "measurement_source", "cold_start", "gpu_rate_per_second_usd"]) {
   if (!inference.response_usage.required.includes(field)) throw new Error(`inference_telemetry_missing:${field}`);
 }
 if (
@@ -97,6 +97,7 @@ if (!coreCandidate || coreCandidate.context_tokens !== 262144 || coreCandidate.i
 }
 if (
   core.paid_execution_authorized !== false || core.production_routing_authorized !== false ||
+  core.require_trusted_provider_token_count_before_request !== true ||
   core.billing.inference_metered_by_usage !== true ||
   core.billing.satisfies_no_flat_fee_and_no_prepaid_credits !== false ||
   core.billing.workers_paid_minimum_usd_per_month !== 5
@@ -109,7 +110,10 @@ if (
 ) throw new Error("ultra_must_be_unselected_scale_to_zero_and_blocked");
 
 const expectedChatModes = ["instant", "medium", "high", "extra-high", "max", "ultra"];
-if (surface.assistant_name !== "Kova" || surface.auto_route.id !== "kova-auto" || surface.auto_route.classifier_implemented !== false) {
+if (
+  surface.assistant_name !== "Kova" || surface.auto_route.id !== "kova-auto" ||
+  surface.auto_route.classifier_implemented !== true || surface.auto_route.deployment_ready !== false
+) {
   throw new Error("blocked_kova_auto_surface_required");
 }
 if (surface.chat_modes.map((mode) => mode.id).join(",") !== expectedChatModes.join(",")) throw new Error("six_ordered_chat_modes_required");
@@ -136,7 +140,12 @@ if (surface.effort_profiles.slice(0, 5).some((profile) => profile.engine !== "ko
   throw new Error("work_ultra_must_change_engine");
 }
 
-if (routes.shared_core_weights !== true || routes.chat.length !== 6 || routes.auto.classifier_implemented !== false) {
+if (
+  routes.shared_core_weights !== true || routes.chat.length !== 6 ||
+  routes.auto.classifier_implemented !== true || routes.auto.classifier_type !== "deterministic_server_rules_v1" ||
+  routes.auto.free_plan_route_cap !== "instant" || routes.auto.ultra_entitlement !== "pro" ||
+  routes.auto.ultra_budget_gate_required !== true || routes.auto.production_ready !== false
+) {
   throw new Error("route_policy_must_be_source_only_and_fail_closed");
 }
 if (routes.chat.slice(0, 5).some((route) => route.engine !== "kova-core") || routes.chat[5].engine !== "kova-ultra") {
@@ -153,10 +162,15 @@ if (surface.deep_mode_experience.hidden_chain_of_thought_exposed !== false || ac
 if (activity.rules.must_follow_real_runtime_or_tool_event !== true || activity.rules.may_claim_unstarted_action !== false) {
   throw new Error("activity_must_be_truthfully_grounded");
 }
-if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 15 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
+if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 18 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
   throw new Error("completion_progress_contract_mismatch");
 }
-if (evaluations.target_routes !== 25 || evaluations.passing_routes.length !== 0 || evaluations.release_policy.allow_name_only_mode_variants !== false) {
+if (
+  evaluations.status !== "all_routes_blocked" || evaluations.target_routes !== 25 ||
+  evaluations.passing_routes.length !== 0 ||
+  Object.values(evaluations.release_policy).some((value) => value !== false) ||
+  !evaluations.required_per_route.includes("truthful_selected_provider_and_upstream_model_disclosure_when_asked")
+) {
   throw new Error("all_routes_require_real_evaluation_evidence");
 }
 
@@ -165,6 +179,9 @@ for (const source of [candidate, cosmo, nova]) {
   if (!evaluated.some((item) => item.model === source.base_model && item.revision === source.base_revision && item.license === source.base_license)) {
     throw new Error(`catalog_missing_verified_candidate:${source.base_model}`);
   }
+}
+if (cosmo.runpod.paid_benchmark_authorized !== false || nova.execution.authorized !== false) {
+  throw new Error("candidate_specific_paid_execution_must_stay_blocked");
 }
 if (catalog.physical_engines.some((engine) => engine.deployment_ready !== false || engine.upstream_model !== null)) {
   throw new Error("unselected_physical_engines_must_stay_blocked");

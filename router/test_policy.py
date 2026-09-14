@@ -39,8 +39,8 @@ class RoutePolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "server-controlled"):
             resolve_route({"surface": "chat", "route_id": "instant", "engine": "kova-ultra"})
 
-    def test_auto_fails_closed_until_classifier_exists(self):
-        with self.assertRaisesRegex(ValueError, "not implemented"):
+    def test_auto_cannot_bypass_server_classifier_context(self):
+        with self.assertRaisesRegex(ValueError, "server classifier context"):
             resolve_route({"surface": "chat", "route_id": "kova-auto"})
 
 

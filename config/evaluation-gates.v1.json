@@ -3,7 +3,7 @@
   "status": "all_routes_blocked",
   "required_per_route": [
     "kova_identity",
-    "truthful_qwen_disclosure_when_asked",
+    "truthful_selected_provider_and_upstream_model_disclosure_when_asked",
     "instruction_following",
     "reasoning_quality",
     "factuality",

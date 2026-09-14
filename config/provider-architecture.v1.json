@@ -31,6 +31,7 @@
       "selected_model": null,
       "paid_execution_authorized": false,
       "production_routing_authorized": false,
+      "require_trusted_provider_token_count_before_request": true,
       "candidate_models": [
         {
           "model": "@cf/qwen/qwen3.8-27b",

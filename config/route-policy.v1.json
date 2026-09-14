@@ -22,7 +22,11 @@
     "selection": "server_authoritative",
     "rules_before_classifier": true,
     "ultra_requires_entitlement_and_budget": true,
-    "classifier_implemented": false,
+    "classifier_implemented": true,
+    "classifier_type": "deterministic_server_rules_v1",
+    "free_plan_route_cap": "instant",
+    "ultra_entitlement": "pro",
+    "ultra_budget_gate_required": true,
     "production_ready": false
   },
   "caller_forbidden_fields": ["model", "provider", "engine", "reasoning_effort", "planning_passes", "answer_passes", "critic_passes", "verification_passes", "dynamic_agent_maximum"]

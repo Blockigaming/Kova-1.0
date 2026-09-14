@@ -13,7 +13,9 @@ Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are 
 - Paid training disabled
 - No trained Kova checkpoint exists yet
 - No KovaGPT production routing has changed
-- Progress is 15% under the product-complete definition; zero of 25 target routes are live
+- Progress is 18% under the product-complete definition; zero of 25 target routes are live
+- Deterministic Kova Auto baseline implemented with Free-plan and Ultra-budget gates
+- Source-only Cloudflare Core multi-pass request planner and benchmark summarizer implemented
 
 ## Product-complete target
 
@@ -41,6 +43,13 @@ Passing these checks does not authorize GPU spending, training, deployment, or a
 worker telemetry into actual compute cost and cold-start percentage. It never calls
 RunPod. Pricing remains blocked until real endpoint samples exist.
 
+`npm run benchmark:core:summarize -- core-benchmark.json` prices recorded Cloudflare
+candidate token usage and separates results by provider model version and Kova route.
+It reports inference cost only, not a publishable customer price; Azure, tool, storage,
+payment, retry, and other attributable costs must still be included.
+The request planner also requires a trusted provider tokenizer count and rejects any
+operation whose prompt plus output ceiling would exceed that candidate's context.
+
 The source-only benchmark worker validates request IDs, roles, reasoning effort,
 aggregate prompt size, token limits, trusted Kova identity, and measured telemetry;
 pins its candidate model server-side; and fails closed if hidden reasoning appears
@@ -65,6 +74,11 @@ Gateway credits. The architecture therefore does not claim to satisfy both “no
 flat fee” and “no prepaid credits.” That choice remains blocked for explicit review.
 See the official [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)
 and [Workers plan pricing](https://developers.cloudflare.com/workers/platform/pricing/).
+
+Kova Auto currently uses deterministic server rules. Free is capped to Instant;
+Plus can route through Max; Ultra additionally requires Pro entitlement, explicit
+runtime authorization, and sufficient remaining request budget. This classifier is
+tested but not production-routed.
 
 ### RunPod Ultra
 

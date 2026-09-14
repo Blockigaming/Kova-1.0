@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
 const required = [
-  "request_id", "attempt_id", "outcome", "cold_start", "reasoning_effort", "worker_start_ms",
+  "request_id", "attempt_id", "outcome", "model", "model_revision", "measurement_source",
+  "cold_start", "reasoning_effort", "worker_start_ms",
   "model_load_ms", "queue_ms", "inference_ms", "idle_timeout_ms", "input_tokens",
   "output_tokens", "gpu_rate_per_second_usd",
 ];
@@ -61,7 +62,7 @@ function summarizeGroup(records) {
 export function summarizeBenchmark(records) {
   if (!Array.isArray(records) || records.length === 0) throw new Error("benchmark requires records");
   const seenAttempts = new Set();
-  const requestEfforts = new Map();
+  const requestIdentities = new Map();
   for (const [index, record] of records.entries()) {
     for (const key of required) {
       if (!(key in record)) throw new Error(`record ${index} missing ${key}`);
@@ -72,11 +73,15 @@ export function summarizeBenchmark(records) {
     }
     seenAttempts.add(record.attempt_id);
     if (!allowedOutcomes.has(record.outcome)) throw new Error(`record ${index} invalid outcome`);
+    if (typeof record.model !== "string" || !record.model) throw new Error(`record ${index} invalid model`);
+    if (typeof record.model_revision !== "string" || !/^[a-f0-9]{40}$/u.test(record.model_revision)) throw new Error(`record ${index} invalid model_revision`);
+    if (record.measurement_source !== "server_provider_runtime") throw new Error(`record ${index} invalid measurement_source`);
     if (typeof record.cold_start !== "boolean") throw new Error(`record ${index} invalid cold_start`);
     if (!allowedEfforts.has(record.reasoning_effort)) throw new Error(`record ${index} invalid reasoning_effort`);
-    const priorEffort = requestEfforts.get(record.request_id);
-    if (priorEffort && priorEffort !== record.reasoning_effort) throw new Error(`request ${record.request_id} mixes reasoning_effort`);
-    requestEfforts.set(record.request_id, record.reasoning_effort);
+    const identity = `${record.model}@${record.model_revision}:${record.reasoning_effort}`;
+    const priorIdentity = requestIdentities.get(record.request_id);
+    if (priorIdentity && priorIdentity !== identity) throw new Error(`request ${record.request_id} mixes model, revision, or reasoning_effort`);
+    requestIdentities.set(record.request_id, identity);
     for (const key of numericFields) {
       if (!Number.isFinite(record[key]) || record[key] < 0) throw new Error(`record ${index} invalid ${key}`);
     }
@@ -95,16 +100,26 @@ export function summarizeBenchmark(records) {
       compute_cost_usd: billableMs / 1000 * rate,
     };
   });
-  const byEffort = {};
-  for (const effort of allowedEfforts) {
-    const samples = priced.filter((record) => record.reasoning_effort === effort);
-    if (samples.length) byEffort[effort] = summarizeGroup(samples);
+  const byModel = {};
+  const modelKeys = new Set(priced.map((record) => `${record.model}@${record.model_revision}`));
+  for (const modelKey of modelKeys) {
+    const modelRecords = priced.filter((record) => `${record.model}@${record.model_revision}` === modelKey);
+    const byEffort = {};
+    for (const effort of allowedEfforts) {
+      const samples = modelRecords.filter((record) => record.reasoning_effort === effort);
+      if (samples.length) byEffort[effort] = summarizeGroup(samples);
+    }
+    byModel[modelKey] = {
+      model: modelRecords[0].model,
+      model_revision: modelRecords[0].model_revision,
+      by_reasoning_effort: byEffort,
+    };
   }
 
   return {
     schema_version: 2,
     attempts: priced.length,
-    by_reasoning_effort: byEffort,
+    by_model: byModel,
     records: priced,
   };
 }
