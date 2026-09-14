@@ -1,12 +1,41 @@
 {
   "schema_version": 1,
   "status": "planning_only",
-  "provider": "runpod-serverless",
+  "provider": "runpod_serverless",
   "worker_type": "flex",
   "active_workers": 0,
   "max_workers": 1,
   "idle_timeout_seconds": 5,
   "execution_timeout_seconds": 600,
+  "physical_endpoint_count": 2,
+  "endpoints": [
+    {
+      "id": "kova-core",
+      "name_reserved": "kova-core",
+      "deployed": false,
+      "worker_type": "flex",
+      "active_workers": 0,
+      "max_workers": 1,
+      "idle_timeout_seconds": 5,
+      "flashboot_required": true,
+      "cached_model_required": true,
+      "streaming_required": true,
+      "endpoint_type_selection": "benchmark_required"
+    },
+    {
+      "id": "kova-ultra",
+      "name_reserved": "kova-ultra",
+      "deployed": false,
+      "worker_type": "flex",
+      "active_workers": 0,
+      "max_workers": 1,
+      "idle_timeout_seconds": 5,
+      "flashboot_required": true,
+      "cached_model_required": true,
+      "streaming_required": true,
+      "endpoint_type_selection": "benchmark_required"
+    }
+  ],
   "billing": {
     "account_model": "prepaid_credits",
     "usage_model": "metered_pay_per_second",
@@ -16,12 +45,13 @@
     "automatic_credit_reload_allowed": false,
     "manual_credit_deposit_required": true,
     "credits_non_refundable": true,
-    "billable_phases": ["worker_running", "post_request_idle_timeout"],
+    "billable_phases": ["worker_start_and_model_load", "request_execution", "post_request_idle_timeout"],
     "non_compute_costs": ["container_disk", "network_volume_if_enabled"]
   },
   "model_storage": {
     "strategy": "runpod_cached_model",
-    "network_volume_enabled": false
+    "network_volume_enabled": false,
+    "runtime_model_download_allowed": false
   },
   "safety": {
     "paid_execution_authorized": false,

@@ -40,7 +40,10 @@ def _tokens(text):
 
 def _contains(text, phrases):
     lowered = text.lower()
-    return {phrase for phrase in phrases if phrase in lowered}
+    return {
+        phrase for phrase in phrases
+        if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", lowered)
+    }
 
 
 def _validate_budget(budget):

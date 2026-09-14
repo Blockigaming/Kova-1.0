@@ -25,6 +25,9 @@ class AutoClassifierTests(unittest.TestCase):
         self.assertEqual(route["route_id"], "high")
         self.assertEqual(route["engine"], "kova-core")
 
+    def test_classifier_terms_match_boundaries_not_substrings(self):
+        self.assertEqual(self.classify("What is a bracelet?")["route_id"], "instant")
+
     def test_multi_domain_project_can_route_to_ultra(self):
         prompt = "Research 30 competitors, create a comprehensive full report, compare pricing, and produce a launch strategy."
         route = self.classify(prompt)

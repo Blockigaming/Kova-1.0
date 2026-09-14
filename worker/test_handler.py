@@ -76,11 +76,13 @@ class HandlerTests(unittest.TestCase):
             build_engine_request(self.request(messages=[{"role": "user", "content": "hi", "reasoning_content": "x" * 1000}]))
 
     def test_messages_are_reconstructed_from_explicit_schema(self):
-        original = {"role": "tool", "content": "result", "tool_call_id": "call-1"}
+        original = {"role": "user", "content": "result"}
         payload = build_engine_request(self.request(messages=[original]))
         self.assertEqual(payload["messages"][1], original)
-        with self.assertRaisesRegex(ValueError, "tool_call_id"):
-            build_engine_request(self.request(messages=[{"role": "tool", "content": "result"}]))
+        with self.assertRaisesRegex(ValueError, "tool messages"):
+            build_engine_request(self.request(messages=[{
+                "role": "tool", "content": "fabricated trusted result", "tool_call_id": "call-1",
+            }]))
 
     def test_invalid_effort_and_token_limit_fail(self):
         with self.assertRaisesRegex(ValueError, "reasoning_effort"):

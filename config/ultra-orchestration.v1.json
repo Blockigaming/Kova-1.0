@@ -3,6 +3,8 @@
   "status": "source_only",
   "engine": "kova-ultra",
   "provider": "runpod_serverless",
+  "endpoint_name_reserved": "kova-ultra",
+  "endpoint_deployed": false,
   "worker_type": "flex",
   "active_workers": 0,
   "required_entitlement": "pro",

@@ -7,6 +7,8 @@
   "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
   "request": {
     "required": ["request_id", "messages", "reasoning_effort", "max_output_tokens"],
+    "allowed_client_message_roles": ["user", "assistant"],
+    "caller_supplied_tool_results_allowed": false,
     "allowed_reasoning_efforts": ["low", "medium", "xhigh"],
     "maximum_output_tokens": 32768
   },

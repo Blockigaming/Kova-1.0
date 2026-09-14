@@ -1,22 +1,28 @@
 # Kova 1.0
 
-Kova is the AI system developed for KovaGPT. The target architecture has two physical inference engines while preserving the existing Azure application plane: a benchmark-selected Kova Core on Cloudflare Workers AI for Auto through Max, and a scale-to-zero Kova Ultra orchestrator on RunPod Serverless.
+Kova is the AI system developed for KovaGPT. The target architecture has two
+physical RunPod Serverless inference endpoints while preserving the existing
+Azure application plane: one benchmark-selected Kova Core endpoint for Auto
+through Max and non-Ultra Work, plus a separate scale-to-zero Kova Ultra endpoint.
+Cloudflare remains the DNS, CDN, WAF, and DDoS edge; it is not an inference host.
 
 Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are behavior and compute profiles, not claims of separately trained foundation weights. The active provider, upstream model, and license must be disclosed truthfully when asked. This repository contains public-safe source only: never commit credentials, private conversations, paid model outputs, private datasets, downloaded weights, adapters, or checkpoints.
 
 ## Current state
 
 - Two-engine provider and route contracts defined
-- Three Cloudflare Core candidates documented; no winner selected
+- One shared RunPod Core endpoint and one RunPod Ultra endpoint are source-defined; neither exists yet
+- BF16 and official FP8 Qwen3.8-27B Core candidates are pinned; no winner is selected
 - Three self-hosted Qwen candidates remain pinned for evaluation
 - Offline planning and dataset validation available
 - Paid training disabled
 - No trained Kova checkpoint exists yet
 - No KovaGPT production routing has changed
-- Progress is 20% under the product-complete definition; zero of 25 target routes are live
+- Progress is 22% under the product-complete definition; zero of 25 target routes are live
 - Deterministic Kova Auto baseline implemented with Free-plan and Ultra-budget gates
-- Source-only Cloudflare Core multi-pass request planner and benchmark summarizer implemented
+- Source-only RunPod Core multi-pass request planner and lifecycle-cost summarizer implemented
 - Source-only Ultra specialist, judge, conditional-debate, and synthesis planner implemented
+- Reproducible offline contract evaluation covers all 25 target routes without provider calls
 
 ## Product-complete target
 
@@ -34,6 +40,7 @@ hidden chain-of-thought and may only describe events that actually occurred.
 ```sh
 npm test
 npm run preflight
+npm run evaluate:offline
 npm run dataset:compile
 npm run training:command
 ```
@@ -44,12 +51,16 @@ Passing these checks does not authorize GPU spending, training, deployment, or a
 worker telemetry into actual compute cost and cold-start percentage. It never calls
 RunPod. Pricing remains blocked until real endpoint samples exist.
 
-`npm run benchmark:core:summarize -- core-benchmark.json` prices recorded Cloudflare
-candidate token usage and separates results by provider model version and Kova route.
-It reports inference cost only, not a publishable customer price; Azure, tool, storage,
-payment, retry, and other attributable costs must still be included.
-The request planner also requires a trusted provider tokenizer count and rejects any
-operation whose prompt plus output ceiling would exceed that candidate's context.
+`npm run benchmark:core:summarize -- core-benchmark.json` prices complete recorded
+RunPod worker lifecycles and separates results by pinned model revision and Kova
+route. It requires one cold-start and one shutdown-tail attribution per lifecycle,
+so retries do not strand cost in another benchmark group. It reports RunPod compute
+only, not a publishable customer price; Azure, tools, storage, payment processing,
+taxes, and other attributable costs must still be included.
+The request planner also requires a trusted provider tokenizer count, binds only
+server-produced private stage artifacts, reserves their worst-case token ceilings,
+and rejects any operation whose bound prompt plus output ceiling could exceed the
+candidate context. The executor must recount the fully bound request before inference.
 
 The source-only benchmark worker validates request IDs, roles, reasoning effort,
 aggregate prompt size, token limits, trusted Kova identity, and measured telemetry;
@@ -63,30 +74,32 @@ Azure remains the application platform for routing, tools, billing enforcement,
 and streaming. New providers must be added behind the existing provider abstraction;
 existing Azure deployments are not deleted before a verified canary and cutover.
 
-Cloudflare Workers AI is the planned Kova Core provider. The permanent Core model
-is not selected until quality, latency, streaming, tool use, context, hallucination,
-and cost benchmarks pass. The current candidate list includes Cloudflare-hosted
-Qwen3.8-27B, Qwen3-30B-A3B-FP8, and GLM-5.3-Flash.
+The final architecture decision rejects Cloudflare Workers AI as the primary
+inference backend after user-reported inconsistent interactive latency. That report
+is recorded as a product decision, not reproducible benchmark telemetry. Cloudflare
+continues to serve only the edge roles.
 
-Cloudflare inference is usage-metered and includes 10,000 free neurons per day,
-but production usage introduces a billing tradeoff: exceeding the free allocation
-requires the Workers Paid plan (currently a $5 monthly minimum) or prepaid AI
-Gateway credits. The architecture therefore does not claim to satisfy both “no
-flat fee” and “no prepaid credits.” That choice remains blocked for explicit review.
-See the official [Workers AI pricing](https://developers.cloudflare.com/workers-ai/platform/pricing/)
-and [Workers plan pricing](https://developers.cloudflare.com/workers/platform/pricing/).
+Both inference engines target RunPod Serverless. Kova Core has two source-verified,
+hardware-unbenchmarked candidates representing the same Qwen3.8-27B model family:
+the original BF16 checkpoint and the official fine-grained FP8 checkpoint. Model,
+quantization, GPU, serving engine, endpoint type, and container digest all remain
+unselected until reproducible quality, latency, streaming, memory, and lifecycle-cost
+benchmarks pass. Qwen documents a native 262,144-token context, `low`, `medium`, and
+`xhigh` reasoning effort, and support for vLLM and SGLang.
 
 Kova Auto currently uses deterministic server rules. Free is capped to Instant;
 Plus can route through Max; Ultra additionally requires Pro entitlement, explicit
 runtime authorization, and sufficient remaining request budget. This classifier is
 tested but not production-routed.
 
-### RunPod Ultra
+### RunPod Core and Ultra
 
-The checked-in RunPod configuration is planning-only and fail-closed. It uses Flex
-workers with zero active workers so inference can scale to zero. Startup, request
-execution, the post-request idle timeout, storage, retries, payment processing, and
-applicable usage taxes must all be measured before customer prices are published.
+The checked-in RunPod configuration is planning-only and fail-closed. It reserves
+`kova-core` and `kova-ultra`, each with Flex workers, zero active workers, a
+one-worker cost cap, five-second idle timeout, required streaming, FlashBoot, and
+cached-model loading. Neither endpoint has been created. Startup, request execution,
+the post-request idle timeout, storage, retries, payment processing, and applicable
+usage taxes must all be measured before customer prices are published.
 
 RunPod's standard account billing is prepaid-credit based even though Serverless
 compute is metered per second. This plan explicitly disables auto-pay and automatic
@@ -107,6 +120,13 @@ The public catalog reserves Kova Auto, Kova 5.6 Cosmo, Kova 5.6 Orion, Kova 5.6
 Nova, and Kova Ultra. None is live. Public profile names describe actual compute and
 orchestration differences while sharing Core weights through Max; they never imply
 separate foundation models.
+
+The offline evaluator resolves all 25 Auto, Chat, and Work route contracts through
+the actual router; builds provider-free Core or Ultra plans; verifies DAG, identity,
+disclosure, source-grounding, activity, and worst-case token-budget invariants; and
+proves that Cosmo, Orion, and Nova Work profiles have distinct server-controlled
+behavior instructions. It evaluates no real model output and therefore leaves all
+quality, factuality, latency, cost, and release gates blocked.
 
 The dataset compiler creates immutable, hashed ms-swift train and validation files.
 The training command is a dry run by default and its execution path remains blocked

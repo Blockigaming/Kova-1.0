@@ -1,5 +1,15 @@
 """Create bounded Ultra plans; this module never launches agents or paid compute."""
 
+import json
+import re
+from pathlib import Path
+
+from router.policy import resolve_route
+
+
+ROOT = Path(__file__).resolve().parents[1]
+IDENTITY = json.loads((ROOT / "config" / "identity.v1.json").read_text(encoding="utf-8"))["system_identity"]
+ULTRA_CONFIG = json.loads((ROOT / "config" / "ultra-orchestration.v1.json").read_text(encoding="utf-8"))
 DOMAIN_SPECIALISTS = {
     "coding": ("planner", "implementation", "security", "test", "performance"),
     "research": ("source_finder", "evidence_analyst", "counterargument", "fact_checker", "domain_reviewer"),
@@ -15,6 +25,12 @@ DOMAIN_TERMS = {
     "business": ("business", "market", "pricing", "launch", "revenue", "cost"),
     "work": ("document", "spreadsheet", "browser", "report", "presentation", "project"),
 }
+ROLE_INSTRUCTIONS = {
+    "specialist": "Work privately as the assigned specialist. Ground conclusions and do not expose hidden chain-of-thought.",
+    "judge": "Compare the private specialist artifacts, identify material disagreement, and judge evidence quality.",
+    "debate": "Challenge only material disagreements identified by the judge. This is the single allowed debate round.",
+    "synthesis": "Produce the final Kova answer from verified artifacts. Do not expose private reasoning or invent tool results.",
+}
 
 
 def _require(condition, message):
@@ -22,10 +38,14 @@ def _require(condition, message):
         raise ValueError(message)
 
 
+def _phrase_present(text, phrase):
+    return re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", text) is not None
+
+
 def _domains(task):
     lowered = task.lower()
     scores = {
-        domain: sum(1 for term in terms if term in lowered)
+        domain: sum(1 for term in terms if _phrase_present(lowered, term))
         for domain, terms in DOMAIN_TERMS.items()
     }
     selected = [domain for domain, score in sorted(scores.items(), key=lambda item: (-item[1], item[0])) if score > 0]
@@ -49,17 +69,36 @@ def _validate_admission(admission):
     _require(4096 <= admission["max_total_tokens"] <= 131072, "max_total_tokens outside safe range")
 
 
+def _resolve_request(request):
+    _require(isinstance(request, dict), "Ultra request must be an object")
+    if "route_id" in request:
+        _require(set(request) == {"request_id", "task", "route_id"}, "Ultra request contains unsupported fields")
+        policy = resolve_route({"surface": "chat", "route_id": request["route_id"]})
+    else:
+        expected = {"request_id", "task", "surface", "family", "effort"}
+        _require(set(request) == expected and request.get("surface") == "work", "Ultra request contains unsupported fields")
+        policy = resolve_route({"surface": "work", "family": request["family"], "effort": request["effort"]})
+    _require(policy["engine"] == "kova-ultra", "route is not eligible for Kova Ultra")
+    return policy
+
+
 def _select_specialists(domains, maximum):
+    """Cover each detected domain once before filling additional specialist slots."""
     specialists = []
-    for domain in domains:
-        for role in DOMAIN_SPECIALISTS[domain]:
-            item = f"{domain}:{role}"
-            if item not in specialists:
-                specialists.append(item)
-            if len(specialists) == maximum:
-                return specialists
-    fallback = DOMAIN_SPECIALISTS["general"]
-    for role in fallback:
+    role_index = 0
+    while len(specialists) < maximum:
+        added = False
+        for domain in domains:
+            roles = DOMAIN_SPECIALISTS[domain]
+            if role_index < len(roles):
+                specialists.append(f"{domain}:{roles[role_index]}")
+                added = True
+                if len(specialists) == maximum:
+                    return specialists
+        if not added:
+            break
+        role_index += 1
+    for role in DOMAIN_SPECIALISTS["general"]:
         item = f"general:{role}"
         if item not in specialists:
             specialists.append(item)
@@ -68,67 +107,155 @@ def _select_specialists(domains, maximum):
     return specialists
 
 
-def build_ultra_plan(request, *, admission):
+def _messages_template(task, behavior_instruction, operation_instruction, artifact_ids, optional_artifact_ids=()):
+    optional = set(optional_artifact_ids)
+    bindings = []
+    messages = [
+        {"role": "system", "content": IDENTITY},
+        {"role": "system", "content": behavior_instruction},
+        {"role": "system", "content": operation_instruction},
+        {"role": "user", "content": task},
+    ]
+    for stage_id in artifact_ids:
+        target_message_index = len(messages)
+        placeholder = f"{{{{server_stage_output:{stage_id}}}}}"
+        is_optional = stage_id in optional
+        messages.append({
+            "role": "system",
+            "content": f"Trusted private Kova artifact {stage_id}: {placeholder}",
+        })
+        bindings.append({
+            "source_stage_id": stage_id,
+            "placeholder": placeholder,
+            "trust": "server_generated_private_stage_output",
+            "when_source_skipped": "bind_empty" if is_optional else "reject",
+            "target_message_index": target_message_index,
+            "target_field": "content",
+            "replace_exact_target_only": True,
+        })
+    return messages, bindings
+
+
+def _trusted_count(token_counter, messages):
+    value = token_counter(messages)
+    _require(isinstance(value, int) and not isinstance(value, bool) and value > 0, "invalid trusted token count")
+    return value
+
+
+def build_ultra_plan(request, *, admission, token_counter):
     """Return a bounded DAG description without executing any operation."""
-    _require(isinstance(request, dict) and set(request) == {"request_id", "task"}, "Ultra request contains unsupported fields")
+    policy = _resolve_request(request)
     request_id = request["request_id"]
     task = request["task"]
     _require(isinstance(request_id, str) and 1 <= len(request_id) <= 128, "invalid request_id")
     _require(isinstance(task, str) and task.strip(), "task must be nonempty text")
     _require(len(task) <= 250_000, "task too large")
     _validate_admission(admission)
+    _require(callable(token_counter), "trusted token counter missing")
     domains = _domains(task)
+    _require(len(domains) <= admission["max_agents"], "max_agents insufficient for detected domain coverage")
     requested_agents = min(admission["max_agents"], max(2, len(domains) + 2))
     specialists = _select_specialists(domains, requested_agents)
-    per_operation_tokens = admission["max_total_tokens"] // (len(specialists) + 3)
-    _require(per_operation_tokens >= 512, "Ultra token budget too small for bounded plan")
+    specialist_ids = [f"specialist-{index + 1}" for index in range(len(specialists))]
 
-    specialist_operations = [
-        {
-            "id": f"specialist-{index + 1}",
+    specs = []
+    for stage_id, role in zip(specialist_ids, specialists):
+        specs.append({
+            "id": stage_id,
             "role": role,
             "parallel_group": "specialists",
             "depends_on": [],
+            "artifact_ids": [],
+            "instruction": f"{ROLE_INSTRUCTIONS['specialist']} Assigned specialist: {role}.",
+        })
+    specs.extend((
+        {
+            "id": "judge", "role": "disagreement_and_evidence_judge",
+            "depends_on": specialist_ids, "artifact_ids": specialist_ids,
+            "instruction": ROLE_INSTRUCTIONS["judge"],
+        },
+        {
+            "id": "debate-round-1", "role": "targeted_challenge",
+            "depends_on": [*specialist_ids, "judge"], "artifact_ids": [*specialist_ids, "judge"],
+            "instruction": ROLE_INSTRUCTIONS["debate"],
+            "condition": "judge_detected_material_disagreement", "maximum_rounds": 1,
+        },
+        {
+            "id": "synthesis", "role": "final_kova_synthesizer",
+            "depends_on": [*specialist_ids, "judge", "debate-round-1"],
+            "artifact_ids": [*specialist_ids, "judge", "debate-round-1"],
+            "optional_artifact_ids": ["debate-round-1"],
+            "instruction": ROLE_INSTRUCTIONS["synthesis"],
+            "dependency_completion_policy": {"debate-round-1": "completed_or_condition_skipped"},
+        },
+    ))
+
+    for spec in specs:
+        messages, bindings = _messages_template(
+            task, policy["behavior_instruction"], spec["instruction"], spec["artifact_ids"],
+            spec.get("optional_artifact_ids", ()),
+        )
+        spec["messages"] = messages
+        spec["artifact_bindings"] = bindings
+        spec["template_input_tokens"] = _trusted_count(token_counter, messages)
+
+    fixed_input_tokens = sum(spec["template_input_tokens"] for spec in specs)
+    output_and_propagation_units = len(specs) + sum(len(spec["artifact_ids"]) for spec in specs)
+    available = admission["max_total_tokens"] - fixed_input_tokens
+    per_operation_tokens = available // output_and_propagation_units
+    _require(per_operation_tokens >= 512, "Ultra token budget too small after input and artifact reservation")
+
+    operations = []
+    for spec in specs:
+        reserved_artifact_tokens = len(spec["artifact_ids"]) * per_operation_tokens
+        operation = {
+            "id": spec["id"],
+            "role": spec["role"],
+            "depends_on": spec["depends_on"],
+            "template_input_tokens": spec["template_input_tokens"],
+            "reserved_artifact_tokens": reserved_artifact_tokens,
+            "maximum_input_tokens": spec["template_input_tokens"] + reserved_artifact_tokens,
             "maximum_output_tokens": per_operation_tokens,
-            "public_output": False,
+            "public_output": spec["id"] == "synthesis",
             "activity_event_allowed_after_start": True,
+            "input_template": {
+                "messages": spec["messages"],
+                "artifact_bindings": spec["artifact_bindings"],
+                "bind_before_provider_request": True,
+                "reject_placeholder_outside_binding_targets": True,
+                "recount_bound_messages_with_trusted_tokenizer": True,
+                "maximum_bound_input_tokens": spec["template_input_tokens"] + reserved_artifact_tokens,
+                "reject_if_bound_input_exceeds_maximum": True,
+            },
         }
-        for index, role in enumerate(specialists)
-    ]
-    specialist_ids = [operation["id"] for operation in specialist_operations]
-    judge = {
-        "id": "judge",
-        "role": "disagreement_and_evidence_judge",
-        "depends_on": specialist_ids,
-        "maximum_output_tokens": per_operation_tokens,
-        "public_output": False,
-        "activity_event_allowed_after_start": True,
-    }
-    debate = {
-        "id": "debate-round-1",
-        "role": "targeted_challenge",
-        "depends_on": ["judge"],
-        "condition": "judge_detected_material_disagreement",
-        "maximum_rounds": 1,
-        "maximum_output_tokens": per_operation_tokens,
-        "public_output": False,
-        "activity_event_allowed_after_start": True,
-    }
-    synthesis = {
-        "id": "synthesis",
-        "role": "final_kova_synthesizer",
-        "depends_on": ["judge", "debate-round-1_if_executed"],
-        "maximum_output_tokens": per_operation_tokens,
-        "public_output": True,
-        "activity_event_allowed_after_start": True,
-    }
+        for field in ("parallel_group", "condition", "maximum_rounds", "dependency_completion_policy"):
+            if field in spec:
+                operation[field] = spec[field]
+        operations.append(operation)
+
+    reserved_total = sum(
+        operation["maximum_input_tokens"] + operation["maximum_output_tokens"]
+        for operation in operations
+    )
+    _require(reserved_total <= admission["max_total_tokens"], "Ultra token reservation exceeds admission cap")
     return {
         "request_id": request_id,
+        "route_id": policy["route_id"],
+        "display_name": policy["display_name"],
+        "profile": policy["profile"],
+        "behavior_contract_id": policy["behavior_contract_id"],
+        "task": task,
         "engine": "kova-ultra",
-        "provider": "runpod_serverless",
+        "provider": ULTRA_CONFIG["provider"],
+        "endpoint_name": ULTRA_CONFIG["endpoint_name_reserved"],
+        "endpoint_deployed": ULTRA_CONFIG["endpoint_deployed"],
         "domains": domains,
+        "covered_domains": sorted({role.split(":", 1)[0] for role in specialists}),
         "model_selection_required": True,
         "production_ready": False,
         "estimated_max_usd": admission["estimated_max_usd"],
-        "operations": [*specialist_operations, judge, debate, synthesis],
+        "maximum_total_tokens": admission["max_total_tokens"],
+        "reserved_maximum_total_tokens": reserved_total,
+        "token_accounting": "worst_case_including_inputs_propagated_artifacts_and_conditional_debate",
+        "operations": operations,
     }

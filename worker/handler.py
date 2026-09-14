@@ -13,7 +13,6 @@ MAX_OUTPUT_TOKENS = 32768
 MAX_MESSAGES = 256
 MAX_MESSAGE_TEXT_CHARS = 250_000
 MAX_TOTAL_TEXT_CHARS = 750_000
-MAX_TOOL_CALL_ID_CHARS = 128
 IDENTITY_PATH = Path(__file__).resolve().parents[1] / "config" / "identity.v1.json"
 TRUSTED_SYSTEM_IDENTITY = json.loads(IDENTITY_PATH.read_text(encoding="utf-8"))["system_identity"]
 RUNTIME_NUMERIC_FIELDS = (
@@ -30,17 +29,12 @@ def _require(condition, message):
 def _validated_message(message):
     _require(isinstance(message, dict), "message must be an object")
     role = message.get("role")
-    _require(role in ("user", "assistant", "tool"), "client system messages are forbidden")
-    allowed_keys = {"role", "content", "tool_call_id"} if role == "tool" else {"role", "content"}
-    _require(set(message).issubset(allowed_keys), "message contains unsupported fields")
+    _require(role in ("user", "assistant"), "client system and tool messages are forbidden")
+    _require(set(message) == {"role", "content"}, "message contains unsupported fields")
     content = message.get("content")
     _require(isinstance(content, str), "only text message content is enabled")
     _require(len(content) <= MAX_MESSAGE_TEXT_CHARS, "message content too large")
     cleaned = {"role": role, "content": content}
-    if role == "tool":
-        tool_call_id = message.get("tool_call_id")
-        _require(isinstance(tool_call_id, str) and 1 <= len(tool_call_id) <= MAX_TOOL_CALL_ID_CHARS, "invalid tool_call_id")
-        cleaned["tool_call_id"] = tool_call_id
     return cleaned
 
 

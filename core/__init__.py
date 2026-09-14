@@ -1,1 +1,1 @@
-"""Source-only Kova Core provider adapter."""
+"""Source-only Kova Core RunPod adapter."""

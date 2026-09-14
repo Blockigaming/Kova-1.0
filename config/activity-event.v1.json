@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "type": "activity",
-  "required_fields": ["event_id", "request_id", "sequence", "phase", "title", "summary", "occurred_at"],
+  "required_fields": ["event_id", "request_id", "sequence", "phase", "title", "summary", "occurred_at", "grounding_operation_id"],
   "allowed_phases": ["thinking", "planning", "searching", "checking", "reading", "comparing", "verifying", "writing", "waiting_for_input"],
   "optional_grounding_fields": ["tool", "domain", "source_url", "result_count", "content_type", "icon_key"],
   "rules": {

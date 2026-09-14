@@ -4,6 +4,7 @@ const load = async (name) => JSON.parse(await readFile(new URL(`../config/${name
 const [
   candidate, stack, runpod, catalog, economics, identity, inference, hardware, surface,
   activity, completion, evaluations, nova, cosmo, architecture, routes, ultraPlan,
+  coreServing,
 ] = await Promise.all([
   "candidate.v1.json", "training-stack.v1.json", "runpod-serverless.v1.json",
   "model-catalog.v1.json", "economics.v1.json", "identity.v1.json",
@@ -11,6 +12,7 @@ const [
   "activity-event.v1.json", "completion-target.v1.json", "evaluation-gates.v1.json",
   "nova-candidate.v1.json", "cosmo-candidate.v1.json", "provider-architecture.v1.json",
   "route-policy.v1.json", "ultra-orchestration.v1.json",
+  "core-serving.v1.json",
 ].map(load));
 
 if (candidate.base_model !== "Qwen/Qwen3.8-27B" || !/^[a-f0-9]{40}$/u.test(candidate.base_revision)) {
@@ -19,7 +21,18 @@ if (candidate.base_model !== "Qwen/Qwen3.8-27B" || !/^[a-f0-9]{40}$/u.test(candi
 if (candidate.execution.authorized !== false || stack.status !== "planning_only" || stack.execution_authorized !== false) {
   throw new Error("planning_only_required");
 }
-if (runpod.worker_type !== "flex" || runpod.active_workers !== 0) throw new Error("runpod_must_scale_to_zero");
+if (runpod.provider !== "runpod_serverless" || runpod.worker_type !== "flex" || runpod.active_workers !== 0) {
+  throw new Error("runpod_must_scale_to_zero");
+}
+if (
+  runpod.physical_endpoint_count !== 2 || runpod.endpoints.length !== 2 ||
+  runpod.endpoints.map((endpoint) => endpoint.id).join(",") !== "kova-core,kova-ultra" ||
+  runpod.endpoints.some((endpoint) =>
+    endpoint.deployed !== false || endpoint.worker_type !== "flex" || endpoint.active_workers !== 0 ||
+    endpoint.max_workers !== 1 || endpoint.flashboot_required !== true ||
+    endpoint.cached_model_required !== true || endpoint.streaming_required !== true
+  )
+) throw new Error("two_blocked_scale_to_zero_runpod_endpoints_required");
 if (runpod.billing.usage_model !== "metered_pay_per_second" || runpod.billing.flat_rate_plan !== false) {
   throw new Error("runpod_must_use_metered_billing");
 }
@@ -71,6 +84,10 @@ if (
   inference.safety.accept_arbitrary_model_from_request !== false ||
   inference.safety.return_hidden_reasoning !== false
 ) throw new Error("inference_must_remain_source_only_and_pinned");
+if (
+  inference.request.allowed_client_message_roles.join(",") !== "user,assistant" ||
+  inference.request.caller_supplied_tool_results_allowed !== false
+) throw new Error("caller_tool_results_must_be_rejected");
 if (hardware.model !== candidate.base_model || hardware.paid_benchmark_authorized !== false) {
   throw new Error("hardware_benchmark_must_match_candidate_and_stay_blocked");
 }
@@ -78,7 +95,10 @@ if (hardware.minimum_unquantized_vram_gb < 80 || hardware.candidates.some((gpu) 
   throw new Error("unquantized_candidates_require_unbenchmarked_80gb_gpu");
 }
 
-if (architecture.status !== "planning_only" || architecture.application_plane.provider !== "azure_container_apps") {
+if (
+  architecture.status !== "planning_only" || architecture.application_plane.provider !== "azure_container_apps" ||
+  architecture.edge_plane.provider !== "cloudflare" || architecture.edge_plane.inference_allowed !== false
+) {
   throw new Error("azure_application_plane_must_be_preserved");
 }
 if (
@@ -88,29 +108,50 @@ if (
 ) throw new Error("unverified_migration_actions_must_be_blocked");
 const core = architecture.engines.find((engine) => engine.id === "kova-core");
 const ultra = architecture.engines.find((engine) => engine.id === "kova-ultra");
-if (!core || core.provider !== "cloudflare_workers_ai" || core.selected_model !== null || core.selection_status !== "benchmark_required") {
-  throw new Error("cloudflare_core_selection_must_stay_benchmark_blocked");
-}
-const coreCandidate = core.candidate_models.find((model) => model.model === "@cf/qwen/qwen3.8-27b");
-if (!coreCandidate || coreCandidate.context_tokens !== 262144 || coreCandidate.input_usd_per_million_tokens !== 0.45 || coreCandidate.output_usd_per_million_tokens !== 3.2) {
-  throw new Error("verified_cloudflare_qwen_candidate_required");
-}
 if (
-  core.paid_execution_authorized !== false || core.production_routing_authorized !== false ||
-  core.require_trusted_provider_token_count_before_request !== true ||
-  core.billing.inference_metered_by_usage !== true ||
-  core.billing.satisfies_no_flat_fee_and_no_prepaid_credits !== false ||
-  core.billing.workers_paid_minimum_usd_per_month !== 5
-) throw new Error("cloudflare_billing_tradeoff_must_be_explicit_and_blocked");
+  architecture.inference_decision.provider !== "runpod_serverless" ||
+  architecture.inference_decision.physical_endpoint_count !== 2 ||
+  architecture.inference_decision.cloudflare_workers_ai_status !== "rejected_as_primary_inference_backend" ||
+  architecture.inference_decision.do_not_claim_cloudflare_benchmark_evidence !== true ||
+  architecture.global_guards.one_core_endpoint_serves_all_core_profiles !== true
+) throw new Error("two_runpod_engine_decision_required");
 if (
-  !ultra || ultra.provider !== "runpod_serverless" || ultra.worker_type !== "flex" ||
-  ultra.active_workers !== 0 || ultra.selected_model !== null ||
-  ultra.paid_execution_authorized !== false || ultra.production_routing_authorized !== false ||
+  !core || !ultra || [core, ultra].some((engine) =>
+    engine.provider !== "runpod_serverless" || engine.endpoint_deployed !== false ||
+    engine.worker_type !== "flex" || engine.active_workers !== 0 || engine.selected_model !== null ||
+    engine.selected_quantization !== null || engine.selected_gpu !== null ||
+    engine.selected_serving_engine !== null || engine.paid_execution_authorized !== false ||
+    engine.deployment_authorized !== false || engine.production_routing_authorized !== false
+  ) || core.endpoint_name_reserved !== "kova-core" || ultra.endpoint_name_reserved !== "kova-ultra" ||
   ultra.hidden_chain_of_thought_exposed !== false
-) throw new Error("ultra_must_be_unselected_scale_to_zero_and_blocked");
+) throw new Error("both_runpod_engines_must_be_unselected_scale_to_zero_and_blocked");
+if (
+  coreServing.status !== "source_only_selection_blocked" || coreServing.engine !== "kova-core" ||
+  coreServing.provider !== "runpod_serverless" || coreServing.endpoint_name_reserved !== "kova-core" ||
+  coreServing.endpoint_deployed !== false || coreServing.selected_serving_engine !== null ||
+  coreServing.selected_candidate_id !== null || coreServing.selected_gpu !== null ||
+  coreServing.container_image_digest !== null || coreServing.native_context_tokens !== 262144 ||
+  coreServing.reasoning_efforts.join(",") !== "low,medium,xhigh" ||
+  coreServing.container_policy.prebuilt_image_required !== true ||
+  coreServing.container_policy.runtime_package_installs_allowed !== false ||
+  coreServing.container_policy.streaming_required !== true ||
+  coreServing.container_policy.hidden_reasoning_must_be_filtered !== true ||
+  Object.values(coreServing.safety).some((value) => value !== false)
+) throw new Error("runpod_core_serving_selection_must_stay_blocked");
+const bf16Core = coreServing.candidates.find((model) => model.model === candidate.base_model);
+const fp8Core = coreServing.candidates.find((model) => model.model === cosmo.base_model);
+if (
+  coreServing.candidates.length !== 2 || !bf16Core || !fp8Core ||
+  bf16Core.revision !== candidate.base_revision || bf16Core.license !== candidate.base_license ||
+  fp8Core.revision !== cosmo.base_revision || fp8Core.license !== cosmo.base_license ||
+  coreServing.candidates.some((model) =>
+    model.context_tokens !== 262144 || model.compatibility_verified !== false || model.benchmark_complete !== false
+  )
+) throw new Error("verified_unbenchmarked_core_candidates_required");
 if (
   ultraPlan.status !== "source_only" || ultraPlan.engine !== "kova-ultra" ||
   ultraPlan.provider !== "runpod_serverless" || ultraPlan.worker_type !== "flex" ||
+  ultraPlan.endpoint_name_reserved !== "kova-ultra" || ultraPlan.endpoint_deployed !== false ||
   ultraPlan.active_workers !== 0 || ultraPlan.required_entitlement !== "pro" ||
   ultraPlan.minimum_specialists !== 2 || ultraPlan.maximum_specialists !== 5 ||
   ultraPlan.maximum_debate_rounds !== 1 || ultraPlan.selected_model !== null ||
@@ -127,6 +168,10 @@ if (
   throw new Error("blocked_kova_auto_surface_required");
 }
 if (surface.chat_modes.map((mode) => mode.id).join(",") !== expectedChatModes.join(",")) throw new Error("six_ordered_chat_modes_required");
+if (
+  surface.chat_modes.map((mode) => mode.display_name).join(",") !==
+  "Kova 5.6 Cosmo,Kova 5.6 Orion,Kova 5.6 Nova,Nova Extra High,Nova Max,Kova Ultra"
+) throw new Error("product_surface_kova_names_invalid");
 if (surface.chat_modes.slice(0, 5).some((mode) => mode.engine !== "kova-core")) throw new Error("auto_through_max_must_use_core");
 if (surface.chat_modes.find((mode) => mode.id === "ultra").engine !== "kova-ultra") throw new Error("ultra_must_change_engine");
 if (surface.chat_modes.find((mode) => mode.id === "instant").activity_updates !== false) throw new Error("instant_must_respond_directly");
@@ -162,9 +207,25 @@ if (routes.chat.slice(0, 5).some((route) => route.engine !== "kova-core") || rou
   throw new Error("route_policy_engine_boundary_invalid");
 }
 if (routes.chat[0].answer_passes !== 1 || routes.chat[0].activity_updates !== false) throw new Error("instant_route_must_be_one_pass");
-if (!routes.caller_forbidden_fields.includes("model") || !routes.caller_forbidden_fields.includes("engine")) {
+if (
+  !routes.caller_forbidden_fields.includes("model") ||
+  !routes.caller_forbidden_fields.includes("engine") ||
+  !routes.caller_forbidden_fields.includes("behavior_contract_id")
+) {
   throw new Error("route_provider_and_model_must_be_server_controlled");
 }
+if (
+  routes.work.family_profiles.length !== 3 ||
+  new Set(routes.work.family_profiles.map((profile) => profile.behavior_contract_id)).size !== 3 ||
+  new Set(routes.work.family_profiles.map((profile) => profile.answer_style)).size !== 3 ||
+  new Set(routes.work.family_profiles.map((profile) => profile.tool_posture)).size !== 3
+) throw new Error("work_families_require_distinct_behavior_contracts");
+if (
+  routes.work.effort_profiles.length !== 6 ||
+  routes.work.effort_profiles.map((profile) => profile.name).join(",") !== routes.work.efforts.join(",") ||
+  routes.work.effort_profiles.slice(0, 5).some((profile) => profile.engine !== "kova-core") ||
+  routes.work.effort_profiles[5].engine !== "kova-ultra"
+) throw new Error("work_effort_route_contracts_invalid");
 
 if (surface.deep_mode_experience.hidden_chain_of_thought_exposed !== false || activity.rules.may_expose_hidden_reasoning !== false) {
   throw new Error("hidden_reasoning_must_stay_private");
@@ -172,12 +233,18 @@ if (surface.deep_mode_experience.hidden_chain_of_thought_exposed !== false || ac
 if (activity.rules.must_follow_real_runtime_or_tool_event !== true || activity.rules.may_claim_unstarted_action !== false) {
   throw new Error("activity_must_be_truthfully_grounded");
 }
-if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 20 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
+if (!activity.required_fields.includes("grounding_operation_id")) throw new Error("activity_runtime_grounding_id_required");
+if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 22 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
   throw new Error("completion_progress_contract_mismatch");
 }
 if (
   evaluations.status !== "all_routes_blocked" || evaluations.target_routes !== 25 ||
   evaluations.passing_routes.length !== 0 ||
+  evaluations.offline_contract_evidence.status !== "passed" ||
+  evaluations.offline_contract_evidence.route_contracts_checked !== 25 ||
+  evaluations.offline_contract_evidence.actual_model_outputs_evaluated !== false ||
+  evaluations.offline_contract_evidence.quality_or_factuality_claimed !== false ||
+  evaluations.offline_contract_evidence.paid_provider_calls !== 0 ||
   Object.values(evaluations.release_policy).some((value) => value !== false) ||
   !evaluations.required_per_route.includes("truthful_selected_provider_and_upstream_model_disclosure_when_asked")
 ) {
@@ -199,5 +266,9 @@ if (catalog.physical_engines.some((engine) => engine.deployment_ready !== false 
 if (catalog.public_profiles.some((profile) => profile.deployment_ready !== false || profile.separate_foundation_weights !== false)) {
   throw new Error("public_profiles_must_be_truthful_and_blocked");
 }
+if (
+  catalog.user_facing_hierarchy.map((mode) => mode.display_name).join(",") !==
+  "Kova Auto,Kova 5.6 Cosmo,Kova 5.6 Orion,Kova 5.6 Nova,Nova Extra High,Nova Max,Kova Ultra"
+) throw new Error("final_kova_mode_hierarchy_required");
 
 console.log("Validated Kova two-engine planning stack; paid execution and production routing remain blocked.");
