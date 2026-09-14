@@ -13,6 +13,7 @@ const activity = JSON.parse(await readFile(new URL("../config/activity-event.v1.
 const completion = JSON.parse(await readFile(new URL("../config/completion-target.v1.json", import.meta.url)));
 const evaluations = JSON.parse(await readFile(new URL("../config/evaluation-gates.v1.json", import.meta.url)));
 const nova = JSON.parse(await readFile(new URL("../config/nova-candidate.v1.json", import.meta.url)));
+const cosmo = JSON.parse(await readFile(new URL("../config/cosmo-candidate.v1.json", import.meta.url)));
 if (candidate.base_model !== "Qwen/Qwen3.8-27B") throw new Error("unexpected_model");
 if (!/^[a-f0-9]{40}$/u.test(candidate.base_revision)) throw new Error("unpinned_revision");
 if (candidate.execution.authorized !== false) throw new Error("execution_must_be_blocked");
@@ -106,7 +107,7 @@ if (surface.deep_mode_experience.hidden_chain_of_thought_exposed !== false || ac
 if (activity.rules.must_follow_real_runtime_or_tool_event !== true || activity.rules.may_claim_unstarted_action !== false) {
   throw new Error("activity_must_be_truthfully_grounded");
 }
-if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 11 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
+if (completion.baseline_percent !== 0 || completion.current_verified_percent !== 13 || completion.live_model_routes !== 0 || completion.target_model_routes !== 25) {
   throw new Error("completion_progress_contract_mismatch");
 }
 if (evaluations.target_routes !== 25 || evaluations.passing_routes.length !== 0 || evaluations.release_policy.allow_name_only_mode_variants !== false) {
@@ -123,12 +124,28 @@ if (
 ) {
   throw new Error("nova_must_match_verified_source_and_stay_blocked");
 }
+const cosmoCatalog = catalog.models.find((model) => model.id === "kova-5.6-cosmo");
+if (
+  cosmo.base_model !== cosmoCatalog.upstream_model ||
+  cosmo.base_revision !== cosmoCatalog.upstream_revision ||
+  cosmo.base_license !== cosmoCatalog.license ||
+  cosmo.runpod.compatibility_verified !== false ||
+  cosmo.runpod.paid_benchmark_authorized !== false ||
+  cosmo.runpod.minimum_vram_gb_for_benchmark < 48
+) {
+  throw new Error("cosmo_must_match_verified_fp8_source_and_stay_blocked");
+}
 for (const model of catalog.models) {
   if (!model.upstream_model && model.deployment_ready !== false) {
     throw new Error(`unverified_model_enabled:${model.id}`);
   }
   if (model.deployment_ready === true) {
-    if (model.upstream_model !== candidate.base_model || model.upstream_revision !== candidate.base_revision || model.license !== candidate.base_license) {
+    const verifiedSources = [candidate, cosmo, nova].map((source) => ({
+      model: source.base_model,
+      revision: source.base_revision,
+      license: source.base_license,
+    }));
+    if (!verifiedSources.some((source) => model.upstream_model === source.model && model.upstream_revision === source.revision && model.license === source.license)) {
       throw new Error(`deployment_ready_model_missing_verified_metadata:${model.id}`);
     }
   }
