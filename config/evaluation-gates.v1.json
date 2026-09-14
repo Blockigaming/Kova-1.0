@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "status": "all_routes_blocked",
+  "required_per_route": [
+    "kova_identity",
+    "truthful_qwen_disclosure_when_asked",
+    "instruction_following",
+    "reasoning_quality",
+    "factuality",
+    "tool_call_schema",
+    "tool_result_grounding",
+    "no_fabricated_actions_or_sources",
+    "no_hidden_reasoning_exposure",
+    "latency_budget",
+    "measured_total_cost",
+    "cold_and_warm_behavior"
+  ],
+  "release_policy": {
+    "allow_partial_route_evidence": false,
+    "allow_name_only_mode_variants": false,
+    "allow_unbenchmarked_route": false,
+    "allow_failed_identity_route": false
+  },
+  "passing_routes": [],
+  "target_routes": 25
+}
