@@ -12,13 +12,13 @@
     { "id": "medium", "display_name": "Medium", "family": "orion", "reasoning_effort": "low", "response_style": "direct", "activity_updates": false, "upstream_status": "verified" },
     { "id": "high", "display_name": "High", "family": "orion", "reasoning_effort": "medium", "response_style": "deliberate", "activity_updates": true, "upstream_status": "verified" },
     { "id": "extra-high", "display_name": "Extra High", "family": "orion", "reasoning_effort": "xhigh", "response_style": "deliberate", "activity_updates": true, "upstream_status": "verified" },
-    { "id": "max", "display_name": "Max", "family": "nova", "reasoning_effort": "medium", "response_style": "interactive", "activity_updates": true, "upstream_status": "blocked_unverified_max" },
-    { "id": "ultra", "display_name": "Ultra", "family": "nova", "reasoning_effort": "xhigh", "response_style": "interactive", "activity_updates": true, "upstream_status": "blocked_unverified_max" }
+    { "id": "max", "display_name": "Max", "family": "nova", "reasoning_effort": "medium", "response_style": "interactive", "activity_updates": true, "upstream_status": "verified_hardware_blocked" },
+    { "id": "ultra", "display_name": "Ultra", "family": "nova", "reasoning_effort": "xhigh", "response_style": "interactive", "activity_updates": true, "upstream_status": "verified_hardware_blocked" }
   ],
   "work_families": [
     { "id": "cosmo", "display_name": "Kova 5.6 Cosmo", "upstream_status": "blocked_unverified_7b" },
     { "id": "orion", "display_name": "Kova 5.6 Orion", "upstream_status": "verified" },
-    { "id": "nova", "display_name": "Kova 5.6 Nova", "upstream_status": "blocked_unverified_max" }
+    { "id": "nova", "display_name": "Kova 5.6 Nova", "upstream_status": "verified_hardware_blocked" }
   ],
   "work_efforts": ["Light", "Medium", "High", "Extra High", "Max", "Ultra"],
   "effort_profiles": [
