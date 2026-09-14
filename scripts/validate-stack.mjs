@@ -7,6 +7,7 @@ const catalog = JSON.parse(await readFile(new URL("../config/model-catalog.v1.js
 const economics = JSON.parse(await readFile(new URL("../config/economics.v1.json", import.meta.url)));
 const identity = JSON.parse(await readFile(new URL("../config/identity.v1.json", import.meta.url)));
 const inference = JSON.parse(await readFile(new URL("../config/inference-contract.v1.json", import.meta.url)));
+const hardware = JSON.parse(await readFile(new URL("../config/hardware-benchmark.v1.json", import.meta.url)));
 if (candidate.base_model !== "Qwen/Qwen3.8-27B") throw new Error("unexpected_model");
 if (!/^[a-f0-9]{40}$/u.test(candidate.base_revision)) throw new Error("unpinned_revision");
 if (candidate.execution.authorized !== false) throw new Error("execution_must_be_blocked");
@@ -56,6 +57,12 @@ if (inference.model !== candidate.base_model || inference.model_revision !== can
 }
 if (inference.safety.paid_execution_authorized !== false || inference.safety.accept_arbitrary_model_from_request !== false) {
   throw new Error("inference_must_remain_source_only_and_pinned");
+}
+if (hardware.model !== candidate.base_model || hardware.paid_benchmark_authorized !== false) {
+  throw new Error("hardware_benchmark_must_match_candidate_and_stay_blocked");
+}
+if (hardware.minimum_unquantized_vram_gb < 80 || hardware.candidates.some((gpu) => gpu.vram_gb < 80 || gpu.benchmark_complete !== false)) {
+  throw new Error("unquantized_candidates_require_unbenchmarked_80gb_gpu");
 }
 for (const model of catalog.models) {
   if (!model.upstream_model && model.deployment_ready !== false) {
