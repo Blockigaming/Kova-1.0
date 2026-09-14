@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "status": "benchmark_required",
+  "model": "Qwen/Qwen3.8-27B",
+  "published_weight_bytes": 55615875685,
+  "minimum_unquantized_vram_gb": 80,
+  "candidates": [
+    { "runpod_gpu_id": "NVIDIA A100 80GB PCIe", "vram_gb": 80, "priority": 1, "benchmark_complete": false },
+    { "runpod_gpu_id": "NVIDIA A100-SXM4-80GB", "vram_gb": 80, "priority": 2, "benchmark_complete": false },
+    { "runpod_gpu_id": "NVIDIA H100 PCIe", "vram_gb": 80, "priority": 3, "benchmark_complete": false },
+    { "runpod_gpu_id": "NVIDIA H100 80GB HBM3", "vram_gb": 80, "priority": 4, "benchmark_complete": false }
+  ],
+  "blocked_pools": [
+    { "pool": "AMPERE_24", "reason": "insufficient_vram_for_published_checkpoint" },
+    { "pool": "ADA_24", "reason": "insufficient_vram_for_published_checkpoint" },
+    { "pool": "AMPERE_48", "reason": "requires_verified_quantized_artifact" },
+    { "pool": "ADA_48_PRO", "reason": "requires_verified_quantized_artifact" }
+  ],
+  "selection_rule": "lowest_measured_total_cost_per_successful_request_subject_to_quality_and_latency_gates",
+  "paid_benchmark_authorized": false
+}
