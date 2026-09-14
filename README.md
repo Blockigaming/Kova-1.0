@@ -23,6 +23,10 @@ npm run training:command
 
 Passing these checks does not authorize GPU spending, training, deployment, or a production model replacement.
 
+`npm run benchmark:summarize -- benchmark.json` converts measured cold and warm
+worker telemetry into actual compute cost and cold-start percentage. It never calls
+RunPod. Pricing remains blocked until real endpoint samples exist.
+
 ## RunPod Serverless plan
 
 The checked-in RunPod configuration is planning-only and fail-closed. It uses Flex
