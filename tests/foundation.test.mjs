@@ -67,3 +67,13 @@ test("price floor targets a 42.6% gross margin before rounding", () => {
   assert.ok(Math.abs(price - 1) < 1e-12);
   assert.ok(Math.abs(realizedMargin(0.574, price) - 0.426) < 1e-12);
 });
+
+test("product target contains six chat modes and eighteen Work combinations", () => {
+  const surface = JSON.parse(readFileSync(join(root, "config/product-surface.v1.json"), "utf8"));
+  assert.deepEqual(surface.chat_modes.map((mode) => mode.display_name), [
+    "Instant", "Medium", "High", "Extra High", "Max", "Ultra",
+  ]);
+  assert.equal(surface.work_families.length * surface.work_efforts.length, 18);
+  assert.equal(surface.chat_modes.find((mode) => mode.id === "instant").activity_updates, false);
+  assert.equal(surface.chat_modes.find((mode) => mode.id === "ultra").activity_updates, true);
+});
