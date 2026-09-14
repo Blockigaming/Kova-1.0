@@ -36,8 +36,10 @@
     {
       "id": "kova-5.6-nova",
       "display_name": "Kova 5.6 Nova",
-      "upstream_model": null,
-      "verification": "blocked_no_verified_open_weight_qwen3.8_max_checkpoint",
+      "upstream_model": "Qwen/Qwen3.8-2.4T-A95B",
+      "upstream_revision": "207bd685a7e3696cfaff12ded7c6a7ea0f88c996",
+      "license": "Qwen3.8-Max",
+      "verification": "upstream_verified_hardware_and_license_review_blocked",
       "deployment_ready": false
     }
   ]
