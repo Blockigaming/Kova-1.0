@@ -11,7 +11,7 @@ Kova is not a foundation model trained from scratch. Qwen attribution and its Ap
 - Paid training disabled
 - No trained Kova checkpoint exists yet
 - No KovaGPT production routing has changed
-- Progress is 10% under the product-complete definition; zero of 25 target routes are live
+- Progress is 11% under the product-complete definition; zero of 25 target routes are live
 
 ## Product-complete target
 
