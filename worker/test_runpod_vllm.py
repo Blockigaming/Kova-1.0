@@ -120,6 +120,7 @@ class RunPodVllmAdapterTests(unittest.TestCase):
     def test_rejects_invalid_stream_encodings_and_payloads(self):
         cases = (
             [b"\xff"],
+            ["\ud800"],
             ["event: message\ndata: {}\n\ndata: [DONE]\n\n"],
             ["data: not-json\n\ndata: [DONE]\n\n"],
             ["data: []\n\ndata: [DONE]\n\n"],
@@ -147,6 +148,11 @@ class RunPodVllmAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(RunPodVllmError, "buffer too large"):
             list(parse_raw_sse(["x" * (MAX_SSE_EVENT_BYTES + 1)]))
 
+        many_valid_events = "data: {}\n\n" * 220_000
+        self.assertGreater(len(many_valid_events), MAX_SSE_EVENT_BYTES)
+        with self.assertRaisesRegex(RunPodVllmError, "too many"):
+            list(parse_raw_sse([many_valid_events, "data: [DONE]\n\n"]))
+
     def test_decodes_one_nonstream_object_and_rejects_ambiguous_outputs(self):
         response = fixture("runpod_vllm_nonstream_success.json")
         self.assertEqual(decode_worker_output(response, expect_stream=False), response)
@@ -154,6 +160,13 @@ class RunPodVllmAdapterTests(unittest.TestCase):
         for invalid in ([], [response, response], "text"):
             with self.subTest(invalid=invalid), self.assertRaises(RunPodVllmError):
                 decode_worker_output(invalid, expect_stream=False)
+
+        def unbounded():
+            while True:
+                yield response
+
+        with self.assertRaisesRegex(RunPodVllmError, "one object"):
+            decode_worker_output(unbounded(), expect_stream=False)
 
     def test_integrates_with_kova_public_stream_contract_without_network(self):
         captured = []

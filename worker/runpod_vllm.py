@@ -36,19 +36,23 @@ def _require(condition, message):
         raise RunPodVllmError(message)
 
 
+def _utf8_size(value):
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError as error:
+        raise RunPodVllmError("RunPod vLLM SSE is not valid UTF-8") from error
+
+
 def _reject_worker_error(value):
     if not isinstance(value, dict) or value.get("error") is None:
         return value
     error = value["error"]
     if isinstance(error, dict):
         error_type = error.get("type")
-        message = error.get("message")
-        detail = ": ".join(
-            item for item in (error_type, message) if isinstance(item, str) and item
-        )
+        detail = error_type if isinstance(error_type, str) and error_type else "unknown_error"
     else:
-        detail = str(error)
-    raise RunPodVllmError(f"RunPod vLLM worker error{': ' + detail if detail else ''}")
+        detail = "unknown_error"
+    raise RunPodVllmError(f"RunPod vLLM worker error: {detail}")
 
 
 def build_queue_job(engine_request):
@@ -77,7 +81,7 @@ def build_queue_job(engine_request):
 
 def _parse_sse_event(raw_event, event_number):
     _require(
-        len(raw_event.encode("utf-8")) <= MAX_SSE_EVENT_BYTES,
+        _utf8_size(raw_event) <= MAX_SSE_EVENT_BYTES,
         "RunPod vLLM SSE event too large",
     )
     data_lines = []
@@ -128,13 +132,9 @@ def parse_raw_sse(fragments):
                 raise RunPodVllmError("RunPod vLLM SSE is not valid UTF-8") from error
         else:
             text = fragment
-        total_bytes += len(text.encode("utf-8"))
+        total_bytes += _utf8_size(text)
         _require(total_bytes <= MAX_SSE_BYTES, "RunPod vLLM SSE response too large")
         buffer = (buffer + text).replace("\r\n", "\n")
-        _require(
-            len(buffer.encode("utf-8")) <= MAX_SSE_EVENT_BYTES,
-            "RunPod vLLM SSE buffer too large",
-        )
 
         while "\n\n" in buffer:
             raw_event, buffer = buffer.split("\n\n", 1)
@@ -150,6 +150,10 @@ def parse_raw_sse(fragments):
             else:
                 json_event_count += 1
                 yield value
+        _require(
+            _utf8_size(buffer) <= MAX_SSE_EVENT_BYTES,
+            "RunPod vLLM SSE buffer too large",
+        )
 
     _require("\r" not in buffer, "unsupported RunPod vLLM SSE line ending")
     _require(not buffer.strip(), "incomplete RunPod vLLM SSE event")
@@ -166,11 +170,19 @@ def decode_worker_output(output, *, expect_stream):
         return deepcopy(_reject_worker_error(output))
     _require(not isinstance(output, (str, bytes)), "non-stream worker output must be an object")
     try:
-        values = list(output)
+        iterator = iter(output)
     except TypeError as error:
         raise RunPodVllmError("non-stream worker output must be an object") from error
-    _require(len(values) == 1 and isinstance(values[0], dict), "non-stream worker must yield one object")
-    return deepcopy(_reject_worker_error(values[0]))
+    try:
+        value = next(iterator)
+    except StopIteration as error:
+        raise RunPodVllmError("non-stream worker must yield one object") from error
+    _require(isinstance(value, dict), "non-stream worker must yield one object")
+    try:
+        next(iterator)
+    except StopIteration:
+        return deepcopy(_reject_worker_error(value))
+    raise RunPodVllmError("non-stream worker must yield one object")
 
 
 def make_queue_inference_client(worker_call):
