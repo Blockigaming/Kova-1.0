@@ -35,6 +35,8 @@ class HandlerTests(unittest.TestCase):
     def runtime_probe(self, **overrides):
         value = {
             "source": "server_provider_runtime",
+            "loaded_model": MODEL,
+            "loaded_model_revision": MODEL_REVISION,
             "cold_start": False,
             "worker_lifecycle_id": "lifecycle-1",
             "worker_start_ms": 0,
@@ -361,10 +363,45 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(records[0]["outcome"], "quarantined")
         self.assertEqual(records[0]["gpu_type_id"], before["gpu_type_id"])
 
+    def test_runtime_probe_verifies_loaded_model_and_revision(self):
+        for overrides, pattern in (
+            ({"loaded_model": "attacker/model"}, "loaded model does not match"),
+            ({"loaded_model_revision": "0" * 40}, "loaded model revision does not match"),
+        ):
+            records = []
+            with self.subTest(pattern=pattern):
+                with self.assertRaisesRegex(ValueError, pattern):
+                    handle_job(
+                        {"input": self.request()}, lambda _payload: self.stream_response(),
+                        self.runtime_probe(**overrides), records.append,
+                        execution_context=self.execution_context(), token_counter=self.token_counter,
+                    )
+                self.assertEqual(records, [])
+
+        records = []
+        before = self.runtime_probe()("before")
+
+        def changed_revision_postflight(phase):
+            if phase == "before":
+                return dict(before)
+            return {**before, "loaded_model_revision": "0" * 40}
+
+        with self.assertRaisesRegex(ValueError, "loaded model revision does not match"):
+            handle_job(
+                {"input": self.request()}, lambda _payload: self.stream_response(),
+                changed_revision_postflight, records.append,
+                execution_context=self.execution_context(), token_counter=self.token_counter,
+                clock_ns=Clock(0, 5_000_000, 10_000_000),
+                attempt_id_factory=lambda: "changed-revision-attempt",
+            )
+        self.assertEqual(records[0]["outcome"], "quarantined")
+        self.assertEqual(records[0]["model_revision"], MODEL_REVISION)
+
     def test_malformed_engine_message_fails_closed(self):
         for response, pattern in (
             ({"choices": [{}], "usage": {"prompt_tokens": 1, "completion_tokens": 1}}, "missing message"),
-            (self.response(content=""), "content or tool_calls"),
+            (self.response(content=""), "non-whitespace content or tool_calls"),
+            (self.response(content="   \n\t"), "non-whitespace content or tool_calls"),
         ):
             with self.subTest(pattern=pattern):
                 records = []
@@ -379,6 +416,19 @@ class HandlerTests(unittest.TestCase):
                         clock_ns=Clock(0, 1), attempt_id_factory=lambda: "failed-attempt",
                     )
                 self.assertEqual(records[0]["outcome"], "failed")
+
+    def test_whitespace_only_public_response_cannot_succeed_or_start_ttft(self):
+        records = []
+        with self.assertRaisesRegex(ValueError, "non-whitespace content or tool_calls"):
+            handle_job(
+                {"input": self.request()}, lambda _payload: self.stream_response("   \n\t"),
+                self.runtime_probe(), records.append,
+                execution_context=self.execution_context(), token_counter=self.token_counter,
+                clock_ns=Clock(0, 10_000_000),
+                attempt_id_factory=lambda: "whitespace-attempt",
+            )
+        self.assertEqual(records[0]["outcome"], "failed")
+        self.assertIsNone(records[0]["time_to_first_token_ms"])
 
     def test_null_content_is_allowed_for_tool_only_response(self):
         result, records = self.handle(self.stream_response(tool_calls=[{
@@ -486,6 +536,8 @@ class HandlerTests(unittest.TestCase):
         records = []
         close_probe = lambda: {
             "source": "server_provider_runtime",
+            "loaded_model": MODEL,
+            "loaded_model_revision": MODEL_REVISION,
             "worker_lifecycle_id": "lifecycle-1",
             "billed_lifecycle_ms": 9000,
             "attributed_idle_timeout_ms": 5000,
@@ -507,6 +559,8 @@ class HandlerTests(unittest.TestCase):
             emit_lifecycle_close(lambda: {**close_probe(), "attributed_idle_timeout_ms": 0}, list().append)
         with self.assertRaisesRegex(ValueError, "idle tail exceeds"):
             emit_lifecycle_close(lambda: {**close_probe(), "billed_lifecycle_ms": 4000}, list().append)
+        with self.assertRaisesRegex(ValueError, "loaded model revision does not match"):
+            emit_lifecycle_close(lambda: {**close_probe(), "loaded_model_revision": "0" * 40}, list().append)
 
     def test_job_telemetry_is_rejected_and_runtime_probe_is_required(self):
         with self.assertRaisesRegex(ValueError, "only input"):

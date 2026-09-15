@@ -60,7 +60,7 @@ const group = (result, route = "instant", config = configuration()) =>
 test("Core benchmark prices one complete RunPod lifecycle", () => {
   const result = summarizeCoreBenchmark([attempt(), close()]);
   const instant = group(result);
-  assert.equal(result.schema_version, 5);
+  assert.equal(result.schema_version, 6);
   assert.equal(result.worker_lifecycles, 1);
   assert.equal(instant.successful_requests, 1);
   assert.ok(Math.abs(instant.total_attributable_compute_cost_usd - 0.009) < 1e-12);
@@ -182,6 +182,7 @@ test("Core benchmark rejects malformed model, rates, timing, and serving identit
   assert.throws(() => summarizeCoreBenchmark([attempt({model: "attacker/model"}), close()]), /unverified model revision/);
   assert.throws(() => summarizeCoreBenchmark([attempt({model_revision: "0".repeat(40)}), close()]), /unverified model revision/);
   assert.throws(() => summarizeCoreBenchmark([attempt({gpu_rate_per_second_usd: 0}), close()]), /gpu_rate/);
+  assert.throws(() => summarizeCoreBenchmark([attempt({input_tokens: 0}), close()]), /successful attempt missing input tokens/);
   assert.throws(() => summarizeCoreBenchmark([attempt({output_tokens: 0}), close()]), /successful attempt missing output tokens/);
   assert.throws(() => summarizeCoreBenchmark([attempt({time_to_first_token_ms: 3000}), close()]), /first token exceeds inference/);
   assert.throws(() => summarizeCoreBenchmark([attempt({serving_engine: "unknown"}), close()]), /serving_engine/);

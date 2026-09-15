@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "status": "source_only",
   "transport": "runpod_serverless_queue",
   "engine": "runpod_benchmark_worker_candidate",
@@ -33,7 +33,17 @@
     "preserve_measured_time_to_first_token_on_stream_failure": true,
     "tool_time_to_first_token_requires_nonempty_fragment_data": true,
     "accepted_finish_reasons": ["stop", "tool_calls"],
+    "non_tool_success_requires_non_whitespace_content": true,
+    "positive_input_usage_required_for_success": true,
     "positive_completion_usage_required_for_success": true
+  },
+  "runtime_identity": {
+    "source": "server_provider_runtime",
+    "required": ["loaded_model", "loaded_model_revision", "worker_lifecycle_id", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],
+    "loaded_model_must_match_pinned_candidate": true,
+    "loaded_revision_must_match_pinned_candidate": true,
+    "validated_before_and_after_each_attempt": true,
+    "lifecycle_close_must_match_pinned_candidate": true
   },
   "telemetry": {
     "attempt_record_required": ["record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "route_id", "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start", "reasoning_effort", "worker_start_ms", "model_load_ms", "queue_ms", "inference_ms", "time_to_first_token_ms", "input_tokens", "output_tokens", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],

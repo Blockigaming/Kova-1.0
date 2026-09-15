@@ -30,9 +30,9 @@ RUNTIME_NUMERIC_FIELDS = (
     "worker_start_ms", "model_load_ms", "queue_ms", "gpu_rate_per_second_usd",
 )
 RUNTIME_IDENTITY_FIELDS = (
-    "source", "worker_lifecycle_id", "cold_start", "worker_start_ms", "model_load_ms",
-    "queue_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine",
-    "endpoint_type", "container_image_digest",
+    "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "cold_start",
+    "worker_start_ms", "model_load_ms", "queue_ms", "gpu_rate_per_second_usd", "gpu_type_id",
+    "gpu_count", "serving_engine", "endpoint_type", "container_image_digest",
 )
 
 
@@ -134,6 +134,11 @@ def _validate_runtime_value(value):
     _require(set(value) == required, "runtime probe returned unsupported or missing fields")
     _require(isinstance(value.get("cold_start"), bool), "invalid cold_start")
     _require(value.get("source") == "server_provider_runtime", "untrusted runtime measurement source")
+    _require(value.get("loaded_model") == MODEL, "runtime loaded model does not match pinned model")
+    _require(
+        value.get("loaded_model_revision") == MODEL_REVISION,
+        "runtime loaded model revision does not match pinned revision",
+    )
     for field in RUNTIME_NUMERIC_FIELDS:
         number = value.get(field)
         _require(isinstance(number, (int, float)) and not isinstance(number, bool), f"invalid {field}")
@@ -291,7 +296,7 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
             fragments = delta.get("tool_calls", [])
             _require(isinstance(fragments, list), "stream tool_calls must be an array")
             meaningful_tool_fragment = _append_stream_tool_calls(tool_call_states, fragments)
-            if first_token_ns is None and (content or meaningful_tool_fragment):
+            if first_token_ns is None and ((content and content.strip()) or meaningful_tool_fragment):
                 first_token_ns = clock_ns()
                 timing_state["time_to_first_token_ms"] = max(0, first_token_ns - started_ns) / 1_000_000
             if content:
@@ -358,7 +363,8 @@ def sanitize_engine_response(request_id, response):
     content = message.get("content")
     tool_calls = _sanitized_tool_calls(message.get("tool_calls", []))
     _require(content is None or isinstance(content, str), "engine response content must be text or null")
-    _require(bool(content) or bool(tool_calls), "engine response must contain content or tool_calls")
+    has_content = bool(content and content.strip())
+    _require(has_content or bool(tool_calls), "engine response must contain non-whitespace content or tool_calls")
     _require(finish_reason != "tool_calls" or bool(tool_calls), "tool-call finish_reason missing tool_calls")
     _require(finish_reason != "stop" or not tool_calls, "stop finish_reason cannot contain tool_calls")
     _require(message.get("reasoning_content") in (None, ""), "engine returned hidden reasoning")
@@ -371,7 +377,7 @@ def sanitize_engine_response(request_id, response):
     _require(output_tokens > 0, "invalid output_tokens")
     return {
         "request_id": request_id,
-        "content": content or "",
+        "content": content if has_content else "",
         "tool_calls": tool_calls,
         "usage": usage,
     }
@@ -385,8 +391,8 @@ def _attempt_record(value, execution, attempt_id, outcome, elapsed_ms, first_tok
         "correlation_id": value["request_id"],
         "attempt_id": attempt_id,
         "outcome": outcome,
-        "model": MODEL,
-        "model_revision": MODEL_REVISION,
+        "model": runtime["loaded_model"],
+        "model_revision": runtime["loaded_model_revision"],
         "route_id": execution["route_id"],
         "stage_id": execution["stage_id"],
         "public_response": execution["public_response"],
@@ -416,14 +422,16 @@ def emit_lifecycle_close(runtime_close_probe, telemetry_sink, *, close_event_id_
     _require(callable(telemetry_sink), "telemetry sink missing")
     value = runtime_close_probe()
     required = {
-        "source", "worker_lifecycle_id", "billed_lifecycle_ms", "attributed_idle_timeout_ms", "gpu_rate_per_second_usd",
-        "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest",
+        "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "billed_lifecycle_ms",
+        "attributed_idle_timeout_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count",
+        "serving_engine", "endpoint_type", "container_image_digest",
     }
     _require(isinstance(value, dict) and set(value) == required, "invalid lifecycle close probe")
     identity_probe = {
         **{field: value[field] for field in (
-            "source", "worker_lifecycle_id", "gpu_rate_per_second_usd", "gpu_type_id",
-            "gpu_count", "serving_engine", "endpoint_type", "container_image_digest",
+            "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision",
+            "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine",
+            "endpoint_type", "container_image_digest",
         )},
         "cold_start": False,
         "worker_start_ms": 0,
@@ -442,8 +450,8 @@ def emit_lifecycle_close(runtime_close_probe, telemetry_sink, *, close_event_id_
         "record_type": "lifecycle_close",
         "close_event_id": close_event_id,
         "worker_lifecycle_id": validated["worker_lifecycle_id"],
-        "model": MODEL,
-        "model_revision": MODEL_REVISION,
+        "model": validated["loaded_model"],
+        "model_revision": validated["loaded_model_revision"],
         "billed_lifecycle_ms": billed_ms,
         "attributed_idle_timeout_ms": idle_ms,
         "gpu_rate_per_second_usd": validated["gpu_rate_per_second_usd"],

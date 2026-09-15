@@ -85,9 +85,11 @@ real streaming chunks; the worker assembles content, tool-call fragments, and us
 before sanitizing the result and measures first-visible-delta latency with its
 monotonic clock. That measurement is preserved if a later stream chunk fails;
 attempts with no visible public delta and all private non-stream stages record TTFT
-as unavailable (`null`) instead of inventing a value. Empty tool fragments do not
-start TTFT; truncated finish reasons and zero completion usage fail closed. A
-postflight runtime-integrity failure persists the paid attempt as quarantined before
+as unavailable (`null`) instead of inventing a value. Empty or whitespace-only text
+does not start TTFT or count as a successful answer; empty tool fragments, truncated
+finish reasons, and zero input or completion usage also fail closed. The trusted
+runtime probe verifies the actually loaded model and pinned revision before and after
+every attempt and again at lifecycle close. A postflight runtime-integrity failure persists the paid attempt as quarantined before
 the error propagates. Private stages use non-streaming responses. The worker pins its
 candidate model server-side and fails closed if hidden reasoning appears in a separate
 field or embedded `<think>` block. The unquantized hardware matrix starts at 80 GB VRAM. No container image

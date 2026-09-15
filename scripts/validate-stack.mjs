@@ -116,7 +116,16 @@ if (
   inference.streaming.preserve_measured_time_to_first_token_on_stream_failure !== true ||
   inference.streaming.tool_time_to_first_token_requires_nonempty_fragment_data !== true ||
   inference.streaming.accepted_finish_reasons.join(",") !== "stop,tool_calls" ||
+  inference.streaming.non_tool_success_requires_non_whitespace_content !== true ||
+  inference.streaming.positive_input_usage_required_for_success !== true ||
   inference.streaming.positive_completion_usage_required_for_success !== true ||
+  inference.runtime_identity.source !== "server_provider_runtime" ||
+  inference.runtime_identity.required.join(",") !==
+    "loaded_model,loaded_model_revision,worker_lifecycle_id,gpu_type_id,gpu_count,serving_engine,endpoint_type,container_image_digest" ||
+  inference.runtime_identity.loaded_model_must_match_pinned_candidate !== true ||
+  inference.runtime_identity.loaded_revision_must_match_pinned_candidate !== true ||
+  inference.runtime_identity.validated_before_and_after_each_attempt !== true ||
+  inference.runtime_identity.lifecycle_close_must_match_pinned_candidate !== true ||
   inference.telemetry.attempt_outcomes.join(",") !== "success,failed,quarantined" ||
   inference.telemetry.request_id_semantics !== "server_generated_logical_route_execution_id" ||
   inference.telemetry.correlation_id_semantics !== "untrusted_caller_value_never_used_for_grouping" ||

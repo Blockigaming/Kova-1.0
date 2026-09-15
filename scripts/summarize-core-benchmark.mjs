@@ -195,6 +195,9 @@ export function summarizeCoreBenchmark(records) {
       for (const field of ["input_tokens", "output_tokens"]) {
         if (!Number.isInteger(record[field]) || record[field] < 0) throw new Error(`record ${index} invalid ${field}`);
       }
+      if (record.outcome === "success" && record.input_tokens <= 0) {
+        throw new Error(`record ${index} successful attempt missing input tokens`);
+      }
       if (record.outcome === "success" && record.output_tokens <= 0) {
         throw new Error(`record ${index} successful attempt missing output tokens`);
       }
@@ -362,7 +365,7 @@ export function summarizeCoreBenchmark(records) {
     throw new Error("request allocations do not conserve billed lifecycle cost");
   }
   return {
-    schema_version: 5,
+    schema_version: 6,
     provider: "runpod_serverless",
     cost_scope: "runpod_compute_only_excludes_storage_app_tools_payment_and_taxes",
     billing_contract: "provider_measured_billed_lifecycle_wall_time_is_authoritative;attempt_durations_are_diagnostics_only",
