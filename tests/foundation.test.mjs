@@ -147,6 +147,17 @@ test("Core container pins upstream source while every build and deployment actio
   assert.equal(config.upstream_worker.bundled_vllm_version, "0.29.0");
   assert.equal(config.upstream_worker.resolved_image_digest, null);
   assert.equal(config.integration.selected, false);
+  assert.equal(config.integration.queue_protocol_adapter, "worker/runpod_vllm.py");
+  assert.equal(config.integration.queue_protocol_adapter_implemented, true);
+  assert.equal(config.integration.cpu_protocol_fixture_verified, true);
+  assert.equal(config.integration.live_provider_envelope_verified, false);
+  assert.equal(config.transport.target, "runpod_serverless_queue");
+  assert.equal(config.transport.queue_input_shape, "openai_passthrough");
+  assert.equal(config.transport.openai_route, "/v1/chat/completions");
+  assert.equal(config.transport.stream_worker_output, "raw_openai_sse");
+  assert.equal(config.transport.full_runpod_http_envelope_supported, false);
+  assert.equal(config.transport.network_client_implemented, false);
+  assert.equal(config.transport.live_transport_verified, false);
   assert.equal(config.candidate_runtime_configuration.client_overrides_allowed, false);
   assert.deepEqual(config.candidate_runtime_configuration.profiles.map((profile) => profile.candidate_id), [
     "qwen3.8-27b-bf16", "qwen3.8-27b-fp8",

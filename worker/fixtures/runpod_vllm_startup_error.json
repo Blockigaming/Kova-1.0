@@ -1,0 +1,7 @@
+{
+  "error": {
+    "message": "fixture startup failure",
+    "type": "startup_error",
+    "code": null
+  }
+}

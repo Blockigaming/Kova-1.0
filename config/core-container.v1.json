@@ -16,12 +16,26 @@
   "integration": {
     "selected": false,
     "kova_benchmark_contract": "worker/handler.py",
+    "queue_protocol_adapter": "worker/runpod_vllm.py",
+    "queue_protocol_adapter_implemented": true,
+    "cpu_protocol_fixture_verified": true,
+    "live_provider_envelope_verified": false,
     "openai_compatible_api_required": true,
     "streaming_required": true,
     "hidden_reasoning_filter_required": true,
     "model_compatibility_verified": false,
     "runtime_identity_probe_verified": false,
     "provider_tokenizer_recount_verified": false
+  },
+  "transport": {
+    "target": "runpod_serverless_queue",
+    "queue_input_shape": "openai_passthrough",
+    "openai_route": "/v1/chat/completions",
+    "stream_worker_output": "raw_openai_sse",
+    "implemented_boundary": "pinned_worker_yielded_output_after_provider_transport",
+    "full_runpod_http_envelope_supported": false,
+    "network_client_implemented": false,
+    "live_transport_verified": false
   },
   "candidate_runtime_configuration": {
     "source": "trusted_server_configuration",

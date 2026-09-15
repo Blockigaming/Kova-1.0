@@ -1,0 +1,6 @@
+[
+  "data: {\"id\":\"chatcmpl-fixture\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Ko",
+  "va\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chatcmpl-fixture\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" response\"},\"finish_reason\":null}]}\n\n",
+  "data: {\"id\":\"chatcmpl-fixture\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: {\"id\":\"chatcmpl-fixture\",\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2,\"total_tokens\":12}}\n\n",
+  "data: [DONE]\n\n"
+]

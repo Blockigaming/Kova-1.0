@@ -14,6 +14,7 @@ Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are 
 - One shared RunPod Core endpoint and one RunPod Ultra endpoint are source-defined; neither exists yet
 - BF16 and official FP8 Qwen3.8-27B Core candidates are pinned; no winner is selected
 - Official RunPod vLLM worker source is pinned as an unbuilt container candidate; no image digest is selected
+- CPU-only compatibility fixtures cover the pinned worker's OpenAI queue input and raw SSE output boundary
 - Three self-hosted Qwen candidates remain pinned for evaluation
 - Offline planning and dataset validation available
 - Paid training disabled
@@ -103,6 +104,16 @@ VRAM for BF16 and 48 GB for official FP8, without claiming that either checkpoin
 or performs acceptably. Provider GPU inventory, pricing, and a concrete hardware ID
 must be captured fresh at benchmark time. No container image is selected until a
 compatible immutable digest and Qwen3.8 serving path are verified.
+
+The CPU-only RunPod adapter wraps trusted engine requests in the pinned worker's
+`openai_route`/`openai_input` queue shape and reconstructs fragmented raw OpenAI
+SSE. It requires exactly one terminal `[DONE]`, preserves tool-call and usage
+fields for Kova's existing sanitizer, and rejects malformed UTF-8, unsupported
+SSE fields, provider errors, oversized events, incomplete streams, duplicate
+terminal markers, and data after termination. These fixtures exercise only the
+pinned worker boundary after provider transport handling. They do not call
+RunPod, support a live RunPod HTTP envelope, verify a model response, prove
+Qwen3.8 compatibility, or authorize a container build, endpoint, or GPU spend.
 
 ## Provider plan
 

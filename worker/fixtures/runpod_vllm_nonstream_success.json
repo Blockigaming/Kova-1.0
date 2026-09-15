@@ -1,0 +1,11 @@
+{
+  "id": "chatcmpl-fixture",
+  "choices": [
+    {
+      "index": 0,
+      "message": {"role": "assistant", "content": "Private Kova stage"},
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {"prompt_tokens": 10, "completion_tokens": 3, "total_tokens": 13}
+}
