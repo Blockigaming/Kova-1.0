@@ -6,13 +6,14 @@ and strictly decodes the worker outputs captured after RunPod transport handling
 """
 
 from copy import deepcopy
+import codecs
 import json
 
 
 OPENAI_CHAT_ROUTE = "/v1/chat/completions"
 MAX_SSE_BYTES = 16 * 1024 * 1024
 MAX_SSE_EVENT_BYTES = 2 * 1024 * 1024
-MAX_SSE_EVENTS = 4096
+MAX_SSE_EVENTS = 32 * 1024
 FORBIDDEN_TRANSPORT_FIELDS = frozenset(
     (
         "api_key",
@@ -118,6 +119,7 @@ def parse_raw_sse(fragments):
         raise RunPodVllmError("SSE output must be an iterable") from error
 
     buffer = ""
+    utf8_decoder = codecs.getincrementaldecoder("utf-8")()
     total_bytes = 0
     event_count = 0
     json_event_count = 0
@@ -125,15 +127,19 @@ def parse_raw_sse(fragments):
 
     for fragment in iterator:
         _require(isinstance(fragment, (str, bytes)), "SSE fragment must be text or bytes")
+        _require(fragment != "" and fragment != b"", "RunPod vLLM SSE fragment must not be empty")
         if isinstance(fragment, bytes):
+            total_bytes += len(fragment)
+            _require(total_bytes <= MAX_SSE_BYTES, "RunPod vLLM SSE response too large")
             try:
-                text = fragment.decode("utf-8")
+                text = utf8_decoder.decode(fragment, final=False)
             except UnicodeDecodeError as error:
                 raise RunPodVllmError("RunPod vLLM SSE is not valid UTF-8") from error
         else:
+            _require(not utf8_decoder.getstate()[0], "RunPod vLLM SSE is not valid UTF-8")
             text = fragment
-        total_bytes += _utf8_size(text)
-        _require(total_bytes <= MAX_SSE_BYTES, "RunPod vLLM SSE response too large")
+            total_bytes += _utf8_size(text)
+            _require(total_bytes <= MAX_SSE_BYTES, "RunPod vLLM SSE response too large")
         buffer = (buffer + text).replace("\r\n", "\n")
 
         while "\n\n" in buffer:
@@ -155,6 +161,10 @@ def parse_raw_sse(fragments):
             "RunPod vLLM SSE buffer too large",
         )
 
+    try:
+        utf8_decoder.decode(b"", final=True)
+    except UnicodeDecodeError as error:
+        raise RunPodVllmError("RunPod vLLM SSE is not valid UTF-8") from error
     _require("\r" not in buffer, "unsupported RunPod vLLM SSE line ending")
     _require(not buffer.strip(), "incomplete RunPod vLLM SSE event")
     _require(done_seen, "RunPod vLLM SSE terminal marker missing")
