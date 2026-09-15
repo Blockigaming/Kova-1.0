@@ -244,6 +244,10 @@ if (
   coreContainer.upstream_worker.resolved_image_digest !== null ||
   coreContainer.integration.selected !== false ||
   coreContainer.integration.kova_benchmark_contract !== "worker/handler.py" ||
+  coreContainer.integration.queue_protocol_adapter !== "worker/runpod_vllm.py" ||
+  coreContainer.integration.queue_protocol_adapter_implemented !== true ||
+  coreContainer.integration.cpu_protocol_fixture_verified !== true ||
+  coreContainer.integration.live_provider_envelope_verified !== false ||
   coreContainer.integration.openai_compatible_api_required !== true ||
   coreContainer.integration.streaming_required !== true ||
   coreContainer.integration.hidden_reasoning_filter_required !== true ||
@@ -260,6 +264,17 @@ if (
   Object.keys(coreContainer.safety).sort().join(",") !== requiredContainerSafetyKeys.join(",") ||
   requiredContainerSafetyKeys.some((key) => coreContainer.safety[key] !== false)
 ) throw new Error("pinned_core_container_candidate_must_stay_unbuilt_and_blocked");
+if (
+  coreContainer.transport.target !== "runpod_serverless_queue" ||
+  coreContainer.transport.queue_input_shape !== "openai_passthrough" ||
+  coreContainer.transport.openai_route !== "/v1/chat/completions" ||
+  coreContainer.transport.stream_worker_output !== "raw_openai_sse" ||
+  coreContainer.transport.implemented_boundary !==
+    "pinned_worker_yielded_output_after_provider_transport" ||
+  coreContainer.transport.full_runpod_http_envelope_supported !== false ||
+  coreContainer.transport.network_client_implemented !== false ||
+  coreContainer.transport.live_transport_verified !== false
+) throw new Error("runpod_queue_transport_must_remain_cpu_only_and_live_unverified");
 if (
   coreContainer.candidate_runtime_configuration.source !== "trusted_server_configuration" ||
   coreContainer.candidate_runtime_configuration.client_overrides_allowed !== false ||
