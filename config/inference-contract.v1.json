@@ -1,10 +1,15 @@
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "status": "source_only",
   "transport": "runpod_serverless_queue",
   "engine": "runpod_benchmark_worker_candidate",
-  "model": "Qwen/Qwen3.8-27B",
-  "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "candidate_selection": {
+    "source": "trusted_server_configuration",
+    "allowlist_source": "config/core-serving.v1.json:candidates",
+    "client_selectable": false,
+    "benchmark_job_must_select_exactly_one": true,
+    "production_candidate_selected": false
+  },
   "request": {
     "required": ["request_id", "messages", "reasoning_effort", "max_output_tokens"],
     "allowed_client_message_roles": ["user", "assistant"],
@@ -15,10 +20,11 @@
     "reasoning_effort_and_output_limit_must_match_trusted_stage": true
   },
   "trusted_execution_context": {
-    "required": ["logical_request_id", "route_id", "stage_id", "public_response", "prior_stage_outputs"],
+    "required": ["logical_request_id", "benchmark_candidate_id", "route_id", "stage_id", "public_response", "prior_stage_outputs"],
     "source": "server_router_and_stage_store_only",
     "logical_request_id_source": "server_generated_uuid4_once_per_route_execution",
     "logical_request_id_format": "kova-exec-{uuid4}",
+    "benchmark_candidate_id_source": "trusted_server_configuration_allowlisted_in_core_serving",
     "prior_stage_outputs": "exact_declared_core_dag_dependencies_only",
     "artifact_trust": "server_recorded_untrusted_model_output",
     "trusted_token_recount_after_binding": true
@@ -40,8 +46,8 @@
   "runtime_identity": {
     "source": "server_provider_runtime",
     "required": ["loaded_model", "loaded_model_revision", "worker_lifecycle_id", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],
-    "loaded_model_must_match_pinned_candidate": true,
-    "loaded_revision_must_match_pinned_candidate": true,
+    "loaded_model_must_match_selected_pinned_candidate": true,
+    "loaded_revision_must_match_selected_pinned_candidate": true,
     "validated_before_and_after_each_attempt": true,
     "lifecycle_close_must_match_pinned_candidate": true
   },

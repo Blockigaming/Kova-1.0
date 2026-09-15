@@ -2,8 +2,7 @@ import unittest
 
 from worker.handler import (
     MAX_MESSAGE_TEXT_CHARS,
-    MODEL,
-    MODEL_REVISION,
+    PINNED_CORE_CANDIDATES,
     TRUSTED_SYSTEM_IDENTITY,
     build_engine_request,
     emit_lifecycle_close,
@@ -21,6 +20,8 @@ class Clock:
 
 class HandlerTests(unittest.TestCase):
     digest = "sha256:" + "a" * 64
+    bf16 = PINNED_CORE_CANDIDATES["qwen3.8-27b-bf16"]
+    fp8 = PINNED_CORE_CANDIDATES["qwen3.8-27b-fp8"]
 
     def request(self, **overrides):
         value = {
@@ -35,8 +36,8 @@ class HandlerTests(unittest.TestCase):
     def runtime_probe(self, **overrides):
         value = {
             "source": "server_provider_runtime",
-            "loaded_model": MODEL,
-            "loaded_model_revision": MODEL_REVISION,
+            "loaded_model": self.bf16["model"],
+            "loaded_model_revision": self.bf16["model_revision"],
             "cold_start": False,
             "worker_lifecycle_id": "lifecycle-1",
             "worker_start_ms": 0,
@@ -59,6 +60,7 @@ class HandlerTests(unittest.TestCase):
     def execution_context(self, **overrides):
         value = {
             "logical_request_id": "kova-exec-00000000-0000-4000-8000-000000000001",
+            "benchmark_candidate_id": self.bf16["id"],
             "route_id": "instant", "stage_id": "answer-1", "public_response": True,
             "prior_stage_outputs": {},
         }
@@ -111,10 +113,38 @@ class HandlerTests(unittest.TestCase):
         payload = build_engine_request(
             self.request(), self.execution_context(), token_counter=self.token_counter,
         )
-        self.assertEqual(payload["model"], MODEL)
+        self.assertEqual(payload["model"], self.bf16["model"])
         self.assertEqual(payload["messages"][0], {"role": "system", "content": TRUSTED_SYSTEM_IDENTITY})
         self.assertTrue(payload["stream"])
         self.assertFalse(payload["chat_template_kwargs"]["enable_thinking"])
+
+    def test_worker_supports_each_allowlisted_candidate_from_trusted_context(self):
+        fp8_context = self.execution_context(benchmark_candidate_id=self.fp8["id"])
+        payload = build_engine_request(
+            self.request(), fp8_context, token_counter=self.token_counter,
+        )
+        self.assertEqual(payload["model"], self.fp8["model"])
+
+        records = []
+        result = handle_job(
+            {"input": self.request()}, lambda _payload: self.stream_response(),
+            self.runtime_probe(
+                loaded_model=self.fp8["model"],
+                loaded_model_revision=self.fp8["model_revision"],
+            ),
+            records.append,
+            execution_context=fp8_context, token_counter=self.token_counter,
+            clock_ns=Clock(0, 5_000_000, 10_000_000),
+            attempt_id_factory=lambda: "fp8-attempt",
+        )
+        self.assertEqual(result["benchmark"]["model"], self.fp8["model"])
+        self.assertEqual(result["benchmark"]["model_revision"], self.fp8["model_revision"])
+
+        with self.assertRaisesRegex(ValueError, "pinned Core allowlist"):
+            build_engine_request(
+                self.request(), self.execution_context(benchmark_candidate_id="untrusted-model"),
+                token_counter=self.token_counter,
+            )
 
     def test_worker_executes_stage_specific_prompt_with_bound_prior_outputs(self):
         payload = build_engine_request(
@@ -395,7 +425,7 @@ class HandlerTests(unittest.TestCase):
                 attempt_id_factory=lambda: "changed-revision-attempt",
             )
         self.assertEqual(records[0]["outcome"], "quarantined")
-        self.assertEqual(records[0]["model_revision"], MODEL_REVISION)
+        self.assertEqual(records[0]["model_revision"], self.bf16["model_revision"])
 
     def test_malformed_engine_message_fails_closed(self):
         for response, pattern in (
@@ -521,8 +551,8 @@ class HandlerTests(unittest.TestCase):
         benchmark = result["benchmark"]
         self.assertEqual(benchmark, records[0])
         self.assertEqual(benchmark["outcome"], "success")
-        self.assertEqual(benchmark["model"], MODEL)
-        self.assertEqual(benchmark["model_revision"], MODEL_REVISION)
+        self.assertEqual(benchmark["model"], self.bf16["model"])
+        self.assertEqual(benchmark["model_revision"], self.bf16["model_revision"])
         self.assertEqual(benchmark["inference_ms"], 75)
         self.assertEqual(benchmark["time_to_first_token_ms"], 10)
         self.assertEqual(benchmark["measurement_source"], "server_provider_runtime")
@@ -536,8 +566,8 @@ class HandlerTests(unittest.TestCase):
         records = []
         close_probe = lambda: {
             "source": "server_provider_runtime",
-            "loaded_model": MODEL,
-            "loaded_model_revision": MODEL_REVISION,
+            "loaded_model": self.bf16["model"],
+            "loaded_model_revision": self.bf16["model_revision"],
             "worker_lifecycle_id": "lifecycle-1",
             "billed_lifecycle_ms": 9000,
             "attributed_idle_timeout_ms": 5000,
@@ -549,18 +579,28 @@ class HandlerTests(unittest.TestCase):
             "container_image_digest": self.digest,
         }
         record = emit_lifecycle_close(
-            close_probe, records.append, close_event_id_factory=lambda: "close-1",
+            close_probe, records.append, benchmark_candidate_id=self.bf16["id"],
+            close_event_id_factory=lambda: "close-1",
         )
         self.assertEqual(record, records[0])
         self.assertEqual(record["record_type"], "lifecycle_close")
         self.assertEqual(record["billed_lifecycle_ms"], 9000)
         self.assertEqual(record["attributed_idle_timeout_ms"], 5000)
         with self.assertRaisesRegex(ValueError, "attributed_idle_timeout_ms"):
-            emit_lifecycle_close(lambda: {**close_probe(), "attributed_idle_timeout_ms": 0}, list().append)
+            emit_lifecycle_close(
+                lambda: {**close_probe(), "attributed_idle_timeout_ms": 0}, list().append,
+                benchmark_candidate_id=self.bf16["id"],
+            )
         with self.assertRaisesRegex(ValueError, "idle tail exceeds"):
-            emit_lifecycle_close(lambda: {**close_probe(), "billed_lifecycle_ms": 4000}, list().append)
+            emit_lifecycle_close(
+                lambda: {**close_probe(), "billed_lifecycle_ms": 4000}, list().append,
+                benchmark_candidate_id=self.bf16["id"],
+            )
         with self.assertRaisesRegex(ValueError, "loaded model revision does not match"):
-            emit_lifecycle_close(lambda: {**close_probe(), "loaded_model_revision": "0" * 40}, list().append)
+            emit_lifecycle_close(
+                lambda: {**close_probe(), "loaded_model_revision": "0" * 40}, list().append,
+                benchmark_candidate_id=self.bf16["id"],
+            )
 
     def test_job_telemetry_is_rejected_and_runtime_probe_is_required(self):
         with self.assertRaisesRegex(ValueError, "only input"):

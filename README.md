@@ -78,6 +78,10 @@ The source-only benchmark worker validates request IDs, roles, reasoning effort,
 aggregate prompt size, token limits, trusted Kova identity, and measured telemetry.
 The caller's request ID is retained only as correlation metadata; a server-generated
 `kova-exec-{uuid4}` identifies and groups one logical route execution across stages.
+For each benchmark job, trusted server configuration must select exactly one candidate
+ID from `config/core-serving.v1.json`; client input cannot select or override it. This
+lets the same worker benchmark both pinned BF16 and FP8 candidates without treating
+either one as the production winner.
 It rebuilds the selected Core stage from the server policy, binds exactly the
 server-recorded outputs required by that stage's DAG, recounts the fully bound prompt,
 and rejects mismatched stage limits or missing artifacts. Public stages must return
@@ -88,8 +92,9 @@ attempts with no visible public delta and all private non-stream stages record T
 as unavailable (`null`) instead of inventing a value. Empty or whitespace-only text
 does not start TTFT or count as a successful answer; empty tool fragments, truncated
 finish reasons, and zero input or completion usage also fail closed. The trusted
-runtime probe verifies the actually loaded model and pinned revision before and after
-every attempt and again at lifecycle close. A postflight runtime-integrity failure persists the paid attempt as quarantined before
+runtime probe verifies the actually loaded model and revision against that selected
+allowlisted pin before and after every attempt and again at lifecycle close. A
+postflight runtime-integrity failure persists the paid attempt as quarantined before
 the error propagates. Private stages use non-streaming responses. The worker pins its
 candidate model server-side and fails closed if hidden reasoning appears in a separate
 field or embedded `<think>` block. The unquantized hardware matrix starts at 80 GB VRAM. No container image

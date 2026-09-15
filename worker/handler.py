@@ -9,8 +9,6 @@ from core.adapter import bind_core_operation, build_core_plan
 
 
 ROOT = Path(__file__).resolve().parents[1]
-MODEL = "Qwen/Qwen3.8-27B"
-MODEL_REVISION = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
 ALLOWED_EFFORTS = frozenset(("low", "medium", "xhigh"))
 ALLOWED_SERVING_ENGINES = frozenset(("vllm", "sglang"))
 ALLOWED_ENDPOINT_TYPES = frozenset(("queue_based", "load_balancing"))
@@ -26,6 +24,17 @@ TRUSTED_SYSTEM_IDENTITY = json.loads(
 ROUTE_POLICY = json.loads(
     (ROOT / "config" / "route-policy.v1.json").read_text(encoding="utf-8")
 )
+CORE_SERVING = json.loads(
+    (ROOT / "config" / "core-serving.v1.json").read_text(encoding="utf-8")
+)
+PINNED_CORE_CANDIDATES = {
+    candidate["id"]: {
+        "id": candidate["id"],
+        "model": candidate["model"],
+        "model_revision": candidate["revision"],
+    }
+    for candidate in CORE_SERVING["candidates"]
+}
 RUNTIME_NUMERIC_FIELDS = (
     "worker_start_ms", "model_load_ms", "queue_ms", "gpu_rate_per_second_usd",
 )
@@ -39,6 +48,17 @@ RUNTIME_IDENTITY_FIELDS = (
 def _require(condition, message):
     if not condition:
         raise ValueError(message)
+
+
+def _selected_candidate(candidate_id):
+    _require(isinstance(candidate_id, str) and candidate_id, "trusted benchmark_candidate_id missing")
+    _require(
+        len(PINNED_CORE_CANDIDATES) == len(CORE_SERVING["candidates"]),
+        "pinned Core candidate IDs must be unique",
+    )
+    candidate = PINNED_CORE_CANDIDATES.get(candidate_id)
+    _require(candidate is not None, "benchmark candidate is not in the pinned Core allowlist")
+    return dict(candidate)
 
 
 def _stage_ids(policy):
@@ -102,7 +122,8 @@ def validate_execution_context(value):
     _require(isinstance(value, dict), "trusted execution context missing")
     _require(
         set(value) == {
-            "logical_request_id", "route_id", "stage_id", "public_response", "prior_stage_outputs",
+            "logical_request_id", "benchmark_candidate_id", "route_id", "stage_id",
+            "public_response", "prior_stage_outputs",
         },
         "invalid trusted execution context",
     )
@@ -116,6 +137,7 @@ def validate_execution_context(value):
         parsed_request_id.version == 4 and logical_request_id == f"kova-exec-{parsed_request_id}",
         "invalid logical_request_id",
     )
+    _selected_candidate(value["benchmark_candidate_id"])
     route_id = value["route_id"]
     stage_id = value["stage_id"]
     _require(route_id in CORE_ROUTE_STAGES, "execution route is not Kova Core")
@@ -128,16 +150,19 @@ def validate_execution_context(value):
     return {**value, "prior_stage_outputs": dict(prior_outputs)}
 
 
-def _validate_runtime_value(value):
+def _validate_runtime_value(value, selected_candidate):
     _require(isinstance(value, dict), "runtime probe must return an object")
     required = set(RUNTIME_IDENTITY_FIELDS)
     _require(set(value) == required, "runtime probe returned unsupported or missing fields")
     _require(isinstance(value.get("cold_start"), bool), "invalid cold_start")
     _require(value.get("source") == "server_provider_runtime", "untrusted runtime measurement source")
-    _require(value.get("loaded_model") == MODEL, "runtime loaded model does not match pinned model")
     _require(
-        value.get("loaded_model_revision") == MODEL_REVISION,
-        "runtime loaded model revision does not match pinned revision",
+        value.get("loaded_model") == selected_candidate["model"],
+        "runtime loaded model does not match selected pinned candidate",
+    )
+    _require(
+        value.get("loaded_model_revision") == selected_candidate["model_revision"],
+        "runtime loaded model revision does not match selected pinned revision",
     )
     for field in RUNTIME_NUMERIC_FIELDS:
         number = value.get(field)
@@ -156,10 +181,10 @@ def _validate_runtime_value(value):
     return dict(value)
 
 
-def validate_runtime_probe(runtime_probe, phase):
+def validate_runtime_probe(runtime_probe, phase, selected_candidate):
     _require(callable(runtime_probe), "trusted runtime probe missing")
     _require(phase in ("before", "after"), "invalid runtime probe phase")
-    return _validate_runtime_value(runtime_probe(phase))
+    return _validate_runtime_value(runtime_probe(phase), selected_candidate)
 
 
 def _planner_request(value, route_id):
@@ -172,10 +197,11 @@ def _planner_request(value, route_id):
 def build_engine_request(value, execution_context, *, token_counter):
     value = validate_input(value)
     execution = validate_execution_context(execution_context)
+    selected_candidate = _selected_candidate(execution["benchmark_candidate_id"])
     _require(value["reasoning_effort"] == CORE_ROUTE_EFFORTS[execution["route_id"]], "reasoning_effort does not match trusted route")
     plan = build_core_plan(
         _planner_request(value, execution["route_id"]),
-        candidate_model=MODEL,
+        candidate_model=selected_candidate["model"],
         token_counter=token_counter,
     )
     operation = next(
@@ -191,7 +217,7 @@ def build_engine_request(value, execution_context, *, token_counter):
         execution["prior_stage_outputs"],
         token_counter=token_counter,
     )
-    _require(request["model"] == MODEL, "Core plan changed pinned model")
+    _require(request["model"] == selected_candidate["model"], "Core plan changed selected pinned model")
     return request
 
 
@@ -416,10 +442,14 @@ def _attempt_record(value, execution, attempt_id, outcome, elapsed_ms, first_tok
     }
 
 
-def emit_lifecycle_close(runtime_close_probe, telemetry_sink, *, close_event_id_factory=lambda: str(uuid4())):
+def emit_lifecycle_close(
+    runtime_close_probe, telemetry_sink, *, benchmark_candidate_id,
+    close_event_id_factory=lambda: str(uuid4()),
+):
     """Emit the idle-tail event only after the trusted runtime observes worker shutdown."""
     _require(callable(runtime_close_probe), "trusted lifecycle close probe missing")
     _require(callable(telemetry_sink), "telemetry sink missing")
+    selected_candidate = _selected_candidate(benchmark_candidate_id)
     value = runtime_close_probe()
     required = {
         "source", "worker_lifecycle_id", "loaded_model", "loaded_model_revision", "billed_lifecycle_ms",
@@ -438,7 +468,7 @@ def emit_lifecycle_close(runtime_close_probe, telemetry_sink, *, close_event_id_
         "model_load_ms": 0,
         "queue_ms": 0,
     }
-    validated = _validate_runtime_value(identity_probe)
+    validated = _validate_runtime_value(identity_probe, selected_candidate)
     idle_ms = value["attributed_idle_timeout_ms"]
     _require(isinstance(idle_ms, (int, float)) and not isinstance(idle_ms, bool) and idle_ms > 0, "invalid attributed_idle_timeout_ms")
     billed_ms = value["billed_lifecycle_ms"]
@@ -476,8 +506,9 @@ def handle_job(
     _require(callable(telemetry_sink), "telemetry sink missing")
     value = validate_input(job["input"])
     execution = validate_execution_context(execution_context)
+    selected_candidate = _selected_candidate(execution["benchmark_candidate_id"])
     engine_request = build_engine_request(value, execution, token_counter=token_counter)
-    before = validate_runtime_probe(runtime_probe, "before")
+    before = validate_runtime_probe(runtime_probe, "before", selected_candidate)
     attempt_id = attempt_id_factory()
     _require(isinstance(attempt_id, str) and attempt_id, "invalid server attempt_id")
     started_ns = clock_ns()
@@ -504,7 +535,7 @@ def handle_job(
     first_token_ms = timing_state["time_to_first_token_ms"]
 
     try:
-        after = validate_runtime_probe(runtime_probe, "after")
+        after = validate_runtime_probe(runtime_probe, "after", selected_candidate)
         _require(all(after[field] == before[field] for field in RUNTIME_IDENTITY_FIELDS), "runtime identity changed during attempt")
         _require(first_token_ms is None or first_token_ms <= elapsed_ms, "first token exceeds measured inference")
         _require(execution["public_response"] or first_token_ms is None, "private response cannot claim first-token measurement")

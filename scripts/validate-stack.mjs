@@ -74,9 +74,13 @@ if (
   !identity.forbidden_claims.includes("kova_foundation_trained_from_scratch")
 ) throw new Error("truthful_kova_identity_required");
 
-if (inference.model !== candidate.base_model || inference.model_revision !== candidate.base_revision) {
-  throw new Error("benchmark_worker_must_match_pinned_candidate");
-}
+if (
+  inference.candidate_selection.source !== "trusted_server_configuration" ||
+  inference.candidate_selection.allowlist_source !== "config/core-serving.v1.json:candidates" ||
+  inference.candidate_selection.client_selectable !== false ||
+  inference.candidate_selection.benchmark_job_must_select_exactly_one !== true ||
+  inference.candidate_selection.production_candidate_selected !== false
+) throw new Error("benchmark_worker_candidate_selection_must_be_trusted_and_blocked");
 for (const field of [
   "record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "route_id",
   "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start",
@@ -100,10 +104,11 @@ if (
   inference.request.request_id_semantics !== "caller_correlation_only_not_logical_benchmark_identity" ||
   inference.request.reasoning_effort_and_output_limit_must_match_trusted_stage !== true ||
   inference.trusted_execution_context.required.join(",") !==
-    "logical_request_id,route_id,stage_id,public_response,prior_stage_outputs" ||
+    "logical_request_id,benchmark_candidate_id,route_id,stage_id,public_response,prior_stage_outputs" ||
   inference.trusted_execution_context.source !== "server_router_and_stage_store_only" ||
   inference.trusted_execution_context.logical_request_id_source !== "server_generated_uuid4_once_per_route_execution" ||
   inference.trusted_execution_context.logical_request_id_format !== "kova-exec-{uuid4}" ||
+  inference.trusted_execution_context.benchmark_candidate_id_source !== "trusted_server_configuration_allowlisted_in_core_serving" ||
   inference.trusted_execution_context.prior_stage_outputs !== "exact_declared_core_dag_dependencies_only" ||
   inference.trusted_execution_context.artifact_trust !== "server_recorded_untrusted_model_output" ||
   inference.trusted_execution_context.trusted_token_recount_after_binding !== true ||
@@ -122,8 +127,8 @@ if (
   inference.runtime_identity.source !== "server_provider_runtime" ||
   inference.runtime_identity.required.join(",") !==
     "loaded_model,loaded_model_revision,worker_lifecycle_id,gpu_type_id,gpu_count,serving_engine,endpoint_type,container_image_digest" ||
-  inference.runtime_identity.loaded_model_must_match_pinned_candidate !== true ||
-  inference.runtime_identity.loaded_revision_must_match_pinned_candidate !== true ||
+  inference.runtime_identity.loaded_model_must_match_selected_pinned_candidate !== true ||
+  inference.runtime_identity.loaded_revision_must_match_selected_pinned_candidate !== true ||
   inference.runtime_identity.validated_before_and_after_each_attempt !== true ||
   inference.runtime_identity.lifecycle_close_must_match_pinned_candidate !== true ||
   inference.telemetry.attempt_outcomes.join(",") !== "success,failed,quarantined" ||
@@ -193,6 +198,7 @@ const bf16Core = coreServing.candidates.find((model) => model.model === candidat
 const fp8Core = coreServing.candidates.find((model) => model.model === cosmo.base_model);
 if (
   coreServing.candidates.length !== 2 || !bf16Core || !fp8Core ||
+  coreServing.candidates.map((model) => model.id).join(",") !== "qwen3.8-27b-bf16,qwen3.8-27b-fp8" ||
   bf16Core.revision !== candidate.base_revision || bf16Core.license !== candidate.base_license ||
   fp8Core.revision !== cosmo.base_revision || fp8Core.license !== cosmo.base_license ||
   coreServing.candidates.some((model) =>
