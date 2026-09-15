@@ -13,6 +13,7 @@ Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are 
 - Two-engine provider and route contracts defined
 - One shared RunPod Core endpoint and one RunPod Ultra endpoint are source-defined; neither exists yet
 - BF16 and official FP8 Qwen3.8-27B Core candidates are pinned; no winner is selected
+- Official RunPod vLLM worker source is pinned as an unbuilt container candidate; no image digest is selected
 - Three self-hosted Qwen candidates remain pinned for evaluation
 - Offline planning and dataset validation available
 - Paid training disabled
@@ -97,8 +98,11 @@ allowlisted pin before and after every attempt and again at lifecycle close. A
 postflight runtime-integrity failure persists the paid attempt as quarantined before
 the error propagates. Private stages use non-streaming responses. The worker pins its
 candidate model server-side and fails closed if hidden reasoning appears in a separate
-field or embedded `<think>` block. The unquantized hardware matrix starts at 80 GB VRAM. No container image
-is selected until a compatible image digest and Qwen3.8 serving path are verified.
+field or embedded `<think>` block. Candidate-aware hardware planning starts at 80 GB
+VRAM for BF16 and 48 GB for official FP8, without claiming that either checkpoint fits
+or performs acceptably. Provider GPU inventory, pricing, and a concrete hardware ID
+must be captured fresh at benchmark time. No container image is selected until a
+compatible immutable digest and Qwen3.8 serving path are verified.
 
 ## Provider plan
 
@@ -118,6 +122,21 @@ quantization, GPU, serving engine, endpoint type, and container digest all remai
 unselected until reproducible quality, latency, streaming, memory, and lifecycle-cost
 benchmarks pass. Qwen documents a native 262,144-token context, `low`, `medium`, and
 `xhigh` reasoning effort, and support for vLLM and SGLang.
+
+The source-only container contract pins the official
+[`runpod-workers/worker-vllm` v2.27.0 release](https://github.com/runpod-workers/worker-vllm/releases/tag/v2.27.0)
+at source commit `76054c22c79c515f07065f523598d8efb2f9b682`; that release bundles
+vLLM 0.29.0. `runpod/worker-v1-vllm:v2.27.0` is only a candidate tag. Its
+registry digest is unresolved, the image has not been pulled or built, and compatibility
+with Kova's benchmark contract has not been claimed. Runtime model and revision values
+are fixed by trusted server configuration for each pinned Core candidate; clients cannot
+override them. The maximum served context remains unset until memory and latency tests.
+
+Weight packaging is also intentionally unresolved. Runtime model downloads and network
+volumes remain disabled, while neither a model-baked image nor an immutable cached
+artifact currently exists. Queue-based versus load-balancing Serverless remains
+unselected. Resolving any of those choices requires explicit benchmarks and does not
+authorize image pulls, endpoint creation, GPU execution, deployment, or routing.
 
 Kova Auto currently uses deterministic server rules. Free is capped to Instant;
 Plus can route through Max; Ultra additionally requires Pro entitlement, explicit

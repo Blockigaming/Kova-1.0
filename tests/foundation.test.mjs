@@ -135,3 +135,46 @@ test("Core serving keeps model, quantization, GPU, server, and image selection b
     candidate.benchmark_complete === false
   ));
 });
+
+test("Core container pins upstream source while every build and deployment action stays blocked", () => {
+  const config = JSON.parse(readFileSync(join(root, "config/core-container.v1.json"), "utf8"));
+  assert.equal(config.status, "source_only_build_blocked");
+  assert.equal(config.upstream_worker.repository, "runpod-workers/worker-vllm");
+  assert.equal(config.upstream_worker.release_tag, "v2.27.0");
+  assert.equal(config.upstream_worker.source_commit, "76054c22c79c515f07065f523598d8efb2f9b682");
+  assert.equal(config.upstream_worker.bundled_vllm_version, "0.29.0");
+  assert.equal(config.upstream_worker.resolved_image_digest, null);
+  assert.equal(config.integration.selected, false);
+  assert.equal(config.candidate_runtime_configuration.client_overrides_allowed, false);
+  assert.deepEqual(config.candidate_runtime_configuration.profiles.map((profile) => profile.candidate_id), [
+    "qwen3.8-27b-bf16", "qwen3.8-27b-fp8",
+  ]);
+  assert.equal(config.context.selected_max_model_len, null);
+  assert.equal(config.weights.selected_packaging_strategy, null);
+  assert.equal(config.endpoint.selected_type, null);
+  assert.ok(Object.values(config.safety).every((value) => value === false));
+});
+
+test("hardware planning covers both Core candidates without stale provider inventory claims", () => {
+  const config = JSON.parse(readFileSync(join(root, "config/hardware-benchmark.v1.json"), "utf8"));
+  assert.equal(config.schema_version, 2);
+  assert.equal(config.selected_candidate_id, null);
+  assert.equal(config.selected_provider_hardware_id, null);
+  assert.equal(config.provider_inventory_snapshot, null);
+  assert.equal(config.provider_price_snapshot, null);
+  assert.equal(config.inventory_must_be_refreshed_at_benchmark_time, true);
+  assert.deepEqual(config.candidate_matrices.map((matrix) => [
+    matrix.candidate_id, matrix.minimum_benchmark_vram_gb,
+  ]), [
+    ["qwen3.8-27b-bf16", 80],
+    ["qwen3.8-27b-fp8", 48],
+  ]);
+  assert.ok(config.candidate_matrices.every((matrix) =>
+    matrix.selected_provider_hardware_id === null &&
+    matrix.compatibility_verified === false &&
+    matrix.benchmark_complete === false
+  ));
+  assert.equal(config.paid_benchmark_authorized, false);
+  assert.equal(config.deployment_authorized, false);
+  assert.equal(config.production_routing_authorized, false);
+});
