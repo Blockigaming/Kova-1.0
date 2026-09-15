@@ -56,6 +56,7 @@ class HandlerTests(unittest.TestCase):
 
     def execution_context(self, **overrides):
         value = {
+            "logical_request_id": "kova-exec-00000000-0000-4000-8000-000000000001",
             "route_id": "instant", "stage_id": "answer-1", "public_response": True,
             "prior_stage_outputs": {},
         }
@@ -208,6 +209,29 @@ class HandlerTests(unittest.TestCase):
                 {"input": self.request(reasoning_effort="medium")}, lambda _payload: self.response(),
                 self.runtime_probe(), list().append, execution_context=self.execution_context(), token_counter=self.token_counter,
             )
+        with self.assertRaisesRegex(ValueError, "logical_request_id"):
+            handle_job(
+                {"input": self.request()}, lambda _payload: self.stream_response(),
+                self.runtime_probe(), list().append,
+                execution_context=self.execution_context(logical_request_id="caller-chosen-id"),
+                token_counter=self.token_counter,
+            )
+
+    def test_caller_correlation_id_cannot_merge_server_logical_requests(self):
+        records = []
+        for suffix in (1, 2):
+            handle_job(
+                {"input": self.request(request_id="reused-client-id")},
+                lambda _payload: self.stream_response(), self.runtime_probe(), records.append,
+                execution_context=self.execution_context(
+                    logical_request_id=f"kova-exec-00000000-0000-4000-8000-{suffix:012d}",
+                ),
+                token_counter=self.token_counter,
+                clock_ns=Clock(0, 5_000_000, 10_000_000),
+                attempt_id_factory=lambda suffix=suffix: f"attempt-{suffix}",
+            )
+        self.assertEqual({record["correlation_id"] for record in records}, {"reused-client-id"})
+        self.assertEqual(len({record["request_id"] for record in records}), 2)
 
     def test_remote_multimodal_content_is_blocked(self):
         with self.assertRaisesRegex(ValueError, "only text"):
@@ -453,6 +477,8 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(benchmark["time_to_first_token_ms"], 10)
         self.assertEqual(benchmark["measurement_source"], "server_provider_runtime")
         self.assertEqual(benchmark["record_type"], "attempt")
+        self.assertEqual(benchmark["request_id"], self.execution_context()["logical_request_id"])
+        self.assertEqual(benchmark["correlation_id"], "request-1")
         self.assertEqual(benchmark["route_id"], "medium")
         self.assertEqual(benchmark["worker_lifecycle_id"], "lifecycle-1")
 

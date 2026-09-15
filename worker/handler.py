@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 from time import perf_counter_ns
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from core.adapter import bind_core_operation, build_core_plan
 
@@ -101,8 +101,20 @@ def validate_input(value):
 def validate_execution_context(value):
     _require(isinstance(value, dict), "trusted execution context missing")
     _require(
-        set(value) == {"route_id", "stage_id", "public_response", "prior_stage_outputs"},
+        set(value) == {
+            "logical_request_id", "route_id", "stage_id", "public_response", "prior_stage_outputs",
+        },
         "invalid trusted execution context",
+    )
+    logical_request_id = value["logical_request_id"]
+    _require(isinstance(logical_request_id, str) and logical_request_id.startswith("kova-exec-"), "invalid logical_request_id")
+    try:
+        parsed_request_id = UUID(logical_request_id.removeprefix("kova-exec-"))
+    except (ValueError, AttributeError) as error:
+        raise ValueError("invalid logical_request_id") from error
+    _require(
+        parsed_request_id.version == 4 and logical_request_id == f"kova-exec-{parsed_request_id}",
+        "invalid logical_request_id",
     )
     route_id = value["route_id"]
     stage_id = value["stage_id"]
@@ -369,7 +381,8 @@ def _attempt_record(value, execution, attempt_id, outcome, elapsed_ms, first_tok
     input_tokens, output_tokens = _usage_tokens(response)
     return {
         "record_type": "attempt",
-        "request_id": value["request_id"],
+        "request_id": execution["logical_request_id"],
+        "correlation_id": value["request_id"],
         "attempt_id": attempt_id,
         "outcome": outcome,
         "model": MODEL,

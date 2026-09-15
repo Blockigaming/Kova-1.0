@@ -12,11 +12,12 @@ const commonRequired = [
   "gpu_rate_per_second_usd", "measurement_source",
 ];
 const attemptRequired = [
-  "request_id", "attempt_id", "outcome", "route_id", "stage_id", "public_response",
+  "request_id", "correlation_id", "attempt_id", "outcome", "route_id", "stage_id", "public_response",
   "cold_start", "reasoning_effort", "worker_start_ms", "model_load_ms", "queue_ms", "inference_ms",
   "time_to_first_token_ms", "input_tokens", "output_tokens",
 ];
 const closeRequired = ["close_event_id", "billed_lifecycle_ms", "attributed_idle_timeout_ms"];
+const logicalRequestIdPattern = /^kova-exec-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
 const average = (records, key) => records.length
   ? records.reduce((total, record) => total + record[key], 0) / records.length
@@ -168,8 +169,11 @@ export function summarizeCoreBenchmark(records) {
 
     if (record.record_type === "attempt") {
       for (const field of attemptRequired) if (!(field in record)) throw new Error(`record ${index} missing ${field}`);
-      for (const field of ["request_id", "attempt_id", "stage_id", "route_id"]) {
+      for (const field of ["request_id", "correlation_id", "attempt_id", "stage_id", "route_id"]) {
         if (typeof record[field] !== "string" || !record[field]) throw new Error(`record ${index} invalid ${field}`);
+      }
+      if (!logicalRequestIdPattern.test(record.request_id)) {
+        throw new Error(`record ${index} request_id is not a server logical execution ID`);
       }
       if (seenRecordIds.has(`attempt:${record.attempt_id}`)) throw new Error(`record ${index} duplicate attempt_id`);
       seenRecordIds.add(`attempt:${record.attempt_id}`);
@@ -190,6 +194,9 @@ export function summarizeCoreBenchmark(records) {
       }
       for (const field of ["input_tokens", "output_tokens"]) {
         if (!Number.isInteger(record[field]) || record[field] < 0) throw new Error(`record ${index} invalid ${field}`);
+      }
+      if (record.outcome === "success" && record.output_tokens <= 0) {
+        throw new Error(`record ${index} successful attempt missing output tokens`);
       }
       const firstToken = record.time_to_first_token_ms;
       if (firstToken !== null && (!Number.isFinite(firstToken) || firstToken < 0)) {
@@ -248,6 +255,11 @@ export function summarizeCoreBenchmark(records) {
     const close = lifecycle.closes[0];
     if (startupMs + close.attributed_idle_timeout_ms > close.billed_lifecycle_ms) {
       throw new Error(`lifecycle ${lifecycleId} startup and idle exceed billed wall time`);
+    }
+    const activeMs = close.billed_lifecycle_ms - startupMs - close.attributed_idle_timeout_ms;
+    const longestInferenceMs = Math.max(...lifecycle.attempts.map((record) => record.inference_ms));
+    if (longestInferenceMs > activeMs) {
+      throw new Error(`lifecycle ${lifecycleId} longest attempt exceeds billed active window`);
     }
   }
 

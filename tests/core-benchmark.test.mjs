@@ -5,6 +5,7 @@ import { coreConfigurationKey, summarizeCoreBenchmark } from "../scripts/summari
 const revision = "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0";
 const fp8Revision = "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a";
 const digest = `sha256:${"a".repeat(64)}`;
+const logicalId = (value) => `kova-exec-00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
 const common = {
   worker_lifecycle_id: "lifecycle-1",
   model: "Qwen/Qwen3.8-27B",
@@ -20,7 +21,8 @@ const common = {
 const attempt = (overrides = {}) => ({
   ...common,
   record_type: "attempt",
-  request_id: "request-1",
+  request_id: logicalId(1),
+  correlation_id: "client-request-1",
   attempt_id: "attempt-1",
   outcome: "success",
   route_id: "instant",
@@ -80,7 +82,7 @@ test("Core benchmark separates model, GPU, server, endpoint type, and image", ()
   };
   const result = summarizeCoreBenchmark([
     attempt(), close(),
-    attempt({...fp8Config, request_id: "request-2", attempt_id: "attempt-2"}),
+    attempt({...fp8Config, request_id: logicalId(2), attempt_id: "attempt-2"}),
     close({...fp8Config, close_event_id: "close-2"}),
   ]);
   assert.equal(Object.keys(result.by_configuration).length, 2);
@@ -151,9 +153,9 @@ test("Core benchmark validates stage visibility against Chat and Work DAGs", () 
 test("shared Core lifecycle can span routes and conserves allocated overhead", () => {
   const result = summarizeCoreBenchmark([
     attempt({inference_ms: 1000}),
-    warmAttempt({request_id: "request-2", attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
-    warmAttempt({request_id: "request-2", attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
-    warmAttempt({request_id: "request-2", attempt_id: "verify", route_id: "medium", stage_id: "verification-1", reasoning_effort: "medium", inference_ms: 1000}),
+    warmAttempt({request_id: logicalId(2), attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
+    warmAttempt({request_id: logicalId(2), attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
+    warmAttempt({request_id: logicalId(2), attempt_id: "verify", route_id: "medium", stage_id: "verification-1", reasoning_effort: "medium", inference_ms: 1000}),
     close({billed_lifecycle_ms: 11000}),
   ]);
   assert.ok(Math.abs(group(result).total_attributable_compute_cost_usd - 0.0045) < 1e-12);
@@ -180,9 +182,11 @@ test("Core benchmark rejects malformed model, rates, timing, and serving identit
   assert.throws(() => summarizeCoreBenchmark([attempt({model: "attacker/model"}), close()]), /unverified model revision/);
   assert.throws(() => summarizeCoreBenchmark([attempt({model_revision: "0".repeat(40)}), close()]), /unverified model revision/);
   assert.throws(() => summarizeCoreBenchmark([attempt({gpu_rate_per_second_usd: 0}), close()]), /gpu_rate/);
+  assert.throws(() => summarizeCoreBenchmark([attempt({output_tokens: 0}), close()]), /successful attempt missing output tokens/);
   assert.throws(() => summarizeCoreBenchmark([attempt({time_to_first_token_ms: 3000}), close()]), /first token exceeds inference/);
   assert.throws(() => summarizeCoreBenchmark([attempt({serving_engine: "unknown"}), close()]), /serving_engine/);
   assert.throws(() => summarizeCoreBenchmark([attempt({container_image_digest: "latest"}), close()]), /container_image_digest/);
+  assert.throws(() => summarizeCoreBenchmark([attempt({request_id: "caller-id"}), close()]), /server logical execution ID/);
 });
 
 test("Core benchmark treats TTFT as public-stream-only and nullable before first output", () => {
@@ -202,15 +206,24 @@ test("Core benchmark treats TTFT as public-stream-only and nullable before first
 test("Core benchmark prices billed wall time instead of summed overlapping attempts", () => {
   const result = summarizeCoreBenchmark([
     attempt({inference_ms: 8000, time_to_first_token_ms: 1000}),
-    warmAttempt({request_id: "request-2", attempt_id: "attempt-2", inference_ms: 8000, time_to_first_token_ms: 1000}),
-    close({billed_lifecycle_ms: 9000}),
+    warmAttempt({request_id: logicalId(2), attempt_id: "attempt-2", inference_ms: 8000, time_to_first_token_ms: 1000}),
+    close({billed_lifecycle_ms: 15000}),
   ]);
-  assert.equal(result.total_billed_lifecycle_ms, 9000);
+  assert.equal(result.total_billed_lifecycle_ms, 15000);
   assert.equal(result.total_observed_attempt_inference_ms, 16000);
-  assert.ok(Math.abs(result.total_attributable_compute_cost_usd - 0.009) < 1e-12);
+  assert.equal(group(result).logical_requests, 2);
+  assert.equal(group(result).successful_requests, 2);
+  assert.ok(Math.abs(result.total_attributable_compute_cost_usd - 0.015) < 1e-12);
   assert.ok(Math.abs(result.lifecycle_allocations.reduce(
     (total, item) => total + item.total_lifecycle_cost_usd, 0,
   ) - result.total_attributable_compute_cost_usd) < 1e-12);
+});
+
+test("Core benchmark rejects a lifecycle shorter than its longest attempt", () => {
+  assert.throws(() => summarizeCoreBenchmark([
+    attempt({inference_ms: 8000, time_to_first_token_ms: 1000}),
+    close({billed_lifecycle_ms: 9000}),
+  ]), /longest attempt exceeds billed active window/);
 });
 
 test("Core benchmark counts quarantined attempts without treating them as success", () => {
@@ -226,7 +239,7 @@ test("Core benchmark counts quarantined attempts without treating them as succes
 test("Core lifecycle rejects mixed hardware even when model and route match", () => {
   assert.throws(() => summarizeCoreBenchmark([
     attempt(),
-    warmAttempt({request_id: "request-2", attempt_id: "attempt-2", gpu_type_id: "NVIDIA H100 PCIe"}),
+    warmAttempt({request_id: logicalId(2), attempt_id: "attempt-2", gpu_type_id: "NVIDIA H100 PCIe"}),
     close(),
   ]), /mixes serving configurations/);
 });

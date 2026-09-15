@@ -62,7 +62,8 @@ lost nor double-counted. The conserved startup, active-window, and idle componen
 are allocated without changing the lifecycle total: startup and idle are shared
 equally per logical request, while active-window cost is weighted by observed
 attempt inference time. The recorded GPU rate is the total worker rate for its
-configured GPU count. RunPod-side route TTFT includes cold startup, all
+configured GPU count, and the billed active window must contain the longest
+individual inference attempt. RunPod-side route TTFT includes cold startup, all
 attempt queues and retries, every sequential private DAG stage, and the final
 public stage's first visible delta. It reports RunPod compute
 only, not a publishable customer price; Azure, tools, storage, payment processing,
@@ -74,6 +75,8 @@ candidate context. The executor must recount the fully bound request before infe
 
 The source-only benchmark worker validates request IDs, roles, reasoning effort,
 aggregate prompt size, token limits, trusted Kova identity, and measured telemetry.
+The caller's request ID is retained only as correlation metadata; a server-generated
+`kova-exec-{uuid4}` identifies and groups one logical route execution across stages.
 It rebuilds the selected Core stage from the server policy, binds exactly the
 server-recorded outputs required by that stage's DAG, recounts the fully bound prompt,
 and rejects mismatched stage limits or missing artifacts. Public stages must return

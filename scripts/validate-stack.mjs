@@ -78,7 +78,7 @@ if (inference.model !== candidate.base_model || inference.model_revision !== can
   throw new Error("benchmark_worker_must_match_pinned_candidate");
 }
 for (const field of [
-  "record_type", "request_id", "attempt_id", "outcome", "model", "model_revision", "route_id",
+  "record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "route_id",
   "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start",
   "time_to_first_token_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count",
   "serving_engine", "endpoint_type", "container_image_digest",
@@ -97,10 +97,13 @@ if (
 if (
   inference.request.allowed_client_message_roles.join(",") !== "user,assistant" ||
   inference.request.caller_supplied_tool_results_allowed !== false ||
+  inference.request.request_id_semantics !== "caller_correlation_only_not_logical_benchmark_identity" ||
   inference.request.reasoning_effort_and_output_limit_must_match_trusted_stage !== true ||
   inference.trusted_execution_context.required.join(",") !==
-    "route_id,stage_id,public_response,prior_stage_outputs" ||
+    "logical_request_id,route_id,stage_id,public_response,prior_stage_outputs" ||
   inference.trusted_execution_context.source !== "server_router_and_stage_store_only" ||
+  inference.trusted_execution_context.logical_request_id_source !== "server_generated_uuid4_once_per_route_execution" ||
+  inference.trusted_execution_context.logical_request_id_format !== "kova-exec-{uuid4}" ||
   inference.trusted_execution_context.prior_stage_outputs !== "exact_declared_core_dag_dependencies_only" ||
   inference.trusted_execution_context.artifact_trust !== "server_recorded_untrusted_model_output" ||
   inference.trusted_execution_context.trusted_token_recount_after_binding !== true ||
@@ -115,10 +118,13 @@ if (
   inference.streaming.accepted_finish_reasons.join(",") !== "stop,tool_calls" ||
   inference.streaming.positive_completion_usage_required_for_success !== true ||
   inference.telemetry.attempt_outcomes.join(",") !== "success,failed,quarantined" ||
+  inference.telemetry.request_id_semantics !== "server_generated_logical_route_execution_id" ||
+  inference.telemetry.correlation_id_semantics !== "untrusted_caller_value_never_used_for_grouping" ||
   inference.telemetry.postflight_integrity_failure_outcome !== "quarantined" ||
   inference.telemetry.lifecycle_cost_source !== "provider_measured_billed_lifecycle_wall_time" ||
   inference.telemetry.gpu_rate_per_second_usd_semantics !== "total_worker_gpu_rate_for_configured_gpu_count" ||
   inference.telemetry.lifecycle_cost_allocation !== "startup_idle_equal_per_request_active_proportional_to_observed_attempt_inference" ||
+  inference.telemetry.billed_active_window_must_cover_longest_attempt !== true ||
   inference.telemetry.attempt_durations_are_cost_diagnostics_only !== true ||
   !inference.telemetry.route_time_to_first_token.includes("pre_public_stage_durations")
 ) throw new Error("inference_executor_contract_invalid");
