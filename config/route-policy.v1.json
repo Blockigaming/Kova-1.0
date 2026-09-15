@@ -38,6 +38,14 @@
     "classifier_implemented": true,
     "classifier_type": "deterministic_server_rules_v1",
     "free_plan_route_cap": "instant",
+    "plus_plan_route_cap": "high",
+    "application_entitlement_source": {
+      "repository": "Blockigaming/KovaGPT",
+      "path": "src/lib/mode-entitlements.mjs",
+      "commit": "354ee92087ca5dbff54af619e17958069bb828dc",
+      "verified_on": "2026-09-15",
+      "free_thinking_mapping": "unresolved_not_silently_assigned"
+    },
     "ultra_entitlement": "pro",
     "ultra_budget_gate_required": true,
     "production_ready": false

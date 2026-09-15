@@ -157,9 +157,9 @@ unselected. Resolving any of those choices requires explicit benchmarks and does
 authorize image pulls, endpoint creation, GPU execution, deployment, or routing.
 
 Kova Auto currently uses deterministic server rules. Free is capped to Instant;
-Plus can route through Max; Ultra additionally requires Pro entitlement, explicit
-runtime authorization, and sufficient remaining request budget. This classifier is
-tested but not production-routed.
+Plus is capped to High on every classification/fallback branch; Ultra requires
+Pro entitlement, explicit runtime authorization, and sufficient remaining request
+budget. This classifier is tested but not production-routed.
 
 ### RunPod Core and Ultra
 
