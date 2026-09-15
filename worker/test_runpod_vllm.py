@@ -95,6 +95,20 @@ class RunPodVllmAdapterTests(unittest.TestCase):
         chunks = list(parse_raw_sse([encoded[index : index + 1] for index in range(len(encoded))]))
         self.assertEqual(chunks[0]["choices"][0]["delta"]["content"], "café 東京")
 
+    def test_parses_large_event_from_byte_sized_fragments_without_rescanning(self):
+        content = "x" * (64 * 1024)
+        encoded = (
+            "data: "
+            + json.dumps({"choices": [{"delta": {"content": content}}]}, separators=(",", ":"))
+            + "\n\ndata: [DONE]\n\n"
+        ).encode("utf-8")
+        chunks = list(parse_raw_sse(encoded[index : index + 1] for index in range(len(encoded))))
+        self.assertEqual(chunks[0]["choices"][0]["delta"]["content"], content)
+
+    def test_accepts_crlf_split_across_fragments(self):
+        chunks = list(parse_raw_sse(['data: {"choices": []}\r', "\n\r", "\ndata: [DONE]\r", "\n\r", "\n"]))
+        self.assertEqual(chunks, [{"choices": []}])
+
     def test_preserves_tool_call_fragments_without_interpreting_them(self):
         fragments = [
             'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_","type":"function","function":{"name":"look","arguments":"{\\"q\\":"}}]}}]}\n\n',
