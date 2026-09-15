@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "status": "source_only_selection_blocked",
+  "engine": "kova-core",
+  "provider": "runpod_serverless",
+  "endpoint_name_reserved": "kova-core",
+  "endpoint_deployed": false,
+  "shared_by_profiles": ["cosmo", "orion", "nova"],
+  "native_context_tokens": 262144,
+  "reasoning_efforts": ["low", "medium", "xhigh"],
+  "serving_engine_candidates": ["vllm", "sglang"],
+  "endpoint_type_candidates": ["queue_based", "load_balancing"],
+  "selected_serving_engine": null,
+  "selected_candidate_id": null,
+  "selected_gpu": null,
+  "container_image_digest": null,
+  "container_policy": {
+    "prebuilt_image_required": true,
+    "runtime_package_installs_allowed": false,
+    "openai_compatible_api_required": true,
+    "streaming_required": true,
+    "hidden_reasoning_must_be_filtered": true
+  },
+  "candidates": [
+    {
+      "id": "qwen3.8-27b-bf16",
+      "model": "Qwen/Qwen3.8-27B",
+      "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+      "license": "Apache-2.0",
+      "quantization": "none_bfloat16",
+      "context_tokens": 262144,
+      "stored_bytes": 55615875685,
+      "minimum_benchmark_vram_gb": 80,
+      "compatibility_verified": false,
+      "benchmark_complete": false
+    },
+    {
+      "id": "qwen3.8-27b-fp8",
+      "model": "Qwen/Qwen3.8-27B-FP8",
+      "revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+      "license": "Apache-2.0",
+      "quantization": "fine_grained_fp8_block_128",
+      "context_tokens": 262144,
+      "stored_bytes": 30879676248,
+      "minimum_benchmark_vram_gb": 48,
+      "compatibility_verified": false,
+      "benchmark_complete": false
+    }
+  ],
+  "selection_dimensions": [
+    "quality",
+    "time_to_first_token",
+    "tokens_per_second",
+    "cold_start",
+    "memory",
+    "tool_calling",
+    "streaming",
+    "total_attributable_cost"
+  ],
+  "safety": {
+    "paid_benchmark_authorized": false,
+    "deployment_authorized": false,
+    "production_routing_authorized": false
+  },
+  "source_evidence": {
+    "verified_on": "2026-09-14",
+    "qwen3_8_27b": "https://huggingface.co/Qwen/Qwen3.8-27B",
+    "qwen3_8_27b_fp8": "https://huggingface.co/Qwen/Qwen3.8-27B-FP8",
+    "runpod_vllm": "https://docs.runpod.io/serverless/vllm/get-started"
+  }
+}

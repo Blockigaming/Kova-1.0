@@ -1,0 +1,77 @@
+{
+  "schema_version": 7,
+  "status": "source_only",
+  "transport": "runpod_serverless_queue",
+  "engine": "runpod_benchmark_worker_candidate",
+  "candidate_selection": {
+    "source": "trusted_server_configuration",
+    "allowlist_source": "config/core-serving.v1.json:candidates",
+    "client_selectable": false,
+    "benchmark_job_must_select_exactly_one": true,
+    "production_candidate_selected": false
+  },
+  "request": {
+    "required": ["request_id", "messages", "reasoning_effort", "max_output_tokens"],
+    "allowed_client_message_roles": ["user", "assistant"],
+    "caller_supplied_tool_results_allowed": false,
+    "request_id_semantics": "caller_correlation_only_not_logical_benchmark_identity",
+    "allowed_reasoning_efforts": ["low", "medium", "xhigh"],
+    "maximum_output_tokens": 32768,
+    "reasoning_effort_and_output_limit_must_match_trusted_stage": true
+  },
+  "trusted_execution_context": {
+    "required": ["logical_request_id", "benchmark_candidate_id", "route_id", "stage_id", "public_response", "prior_stage_outputs"],
+    "source": "server_router_and_stage_store_only",
+    "logical_request_id_source": "server_generated_uuid4_once_per_route_execution",
+    "logical_request_id_format": "kova-exec-{uuid4}",
+    "benchmark_candidate_id_source": "trusted_server_configuration_allowlisted_in_core_serving",
+    "prior_stage_outputs": "exact_declared_core_dag_dependencies_only",
+    "artifact_trust": "server_recorded_untrusted_model_output",
+    "trusted_token_recount_after_binding": true
+  },
+  "streaming": {
+    "public_stage_requires_chunk_iterable": true,
+    "private_stage_requires_non_stream_response": true,
+    "assemble_content_tool_calls_and_usage_before_sanitizing": true,
+    "time_to_first_token_source": "worker_monotonic_clock_first_visible_public_delta",
+    "time_to_first_token_unavailable_value": null,
+    "private_stage_time_to_first_token_is_null": true,
+    "preserve_measured_time_to_first_token_on_stream_failure": true,
+    "tool_time_to_first_token_requires_nonempty_fragment_data": true,
+    "accepted_finish_reasons": ["stop", "tool_calls"],
+    "non_tool_success_requires_non_whitespace_content": true,
+    "positive_input_usage_required_for_success": true,
+    "positive_completion_usage_required_for_success": true
+  },
+  "runtime_identity": {
+    "source": "server_provider_runtime",
+    "required": ["loaded_model", "loaded_model_revision", "worker_lifecycle_id", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],
+    "loaded_model_must_match_selected_pinned_candidate": true,
+    "loaded_revision_must_match_selected_pinned_candidate": true,
+    "validated_before_and_after_each_attempt": true,
+    "lifecycle_close_must_match_pinned_candidate": true
+  },
+  "telemetry": {
+    "attempt_record_required": ["record_type", "request_id", "correlation_id", "attempt_id", "outcome", "model", "model_revision", "route_id", "stage_id", "public_response", "worker_lifecycle_id", "measurement_source", "cold_start", "reasoning_effort", "worker_start_ms", "model_load_ms", "queue_ms", "inference_ms", "time_to_first_token_ms", "input_tokens", "output_tokens", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],
+    "request_id_semantics": "server_generated_logical_route_execution_id",
+    "correlation_id_semantics": "untrusted_caller_value_never_used_for_grouping",
+    "attempt_outcomes": ["success", "failed", "quarantined"],
+    "postflight_integrity_failure_outcome": "quarantined",
+    "lifecycle_close_record_required": ["record_type", "close_event_id", "worker_lifecycle_id", "model", "model_revision", "measurement_source", "billed_lifecycle_ms", "attributed_idle_timeout_ms", "gpu_rate_per_second_usd", "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest"],
+    "lifecycle_close_source": "trusted_runtime_shutdown_observation",
+    "lifecycle_cost_source": "provider_measured_billed_lifecycle_wall_time",
+    "gpu_rate_per_second_usd_semantics": "total_worker_gpu_rate_for_configured_gpu_count",
+    "lifecycle_cost_allocation": "startup_idle_equal_per_request_active_proportional_to_observed_attempt_inference",
+    "billed_active_window_must_cover_longest_attempt": true,
+    "billed_active_window_must_cover_longest_sequential_request_path": true,
+    "attempt_durations_are_cost_diagnostics_only": true,
+    "route_completion_accounting": "core_stage_aware_only",
+    "route_time_to_first_token": "startup_plus_all_attempt_queues_and_pre_public_stage_durations_plus_final_public_ttft"
+  },
+  "safety": {
+    "accept_arbitrary_model_from_request": false,
+    "return_hidden_reasoning": false,
+    "require_request_id": true,
+    "paid_execution_authorized": false
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "type": "activity",
+  "required_fields": ["event_id", "request_id", "sequence", "phase", "title", "summary", "occurred_at", "grounding_operation_id"],
+  "allowed_phases": ["thinking", "planning", "searching", "checking", "reading", "comparing", "verifying", "writing", "waiting_for_input"],
+  "optional_grounding_fields": ["tool", "domain", "source_url", "result_count", "content_type", "icon_key"],
+  "rules": {
+    "must_follow_real_runtime_or_tool_event": true,
+    "may_expose_hidden_reasoning": false,
+    "may_claim_unstarted_action": false,
+    "source_url_must_come_from_tool_or_user": true,
+    "icon_must_come_from_trusted_domain_map": true
+  }
+}

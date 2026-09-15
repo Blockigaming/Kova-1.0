@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "status": "candidate_aware_benchmark_required",
+  "engine": "kova-core",
+  "candidate_source": "config/core-serving.v1.json:candidates",
+  "selected_candidate_id": null,
+  "selected_provider_hardware_id": null,
+  "provider_inventory_snapshot": null,
+  "provider_price_snapshot": null,
+  "inventory_must_be_refreshed_at_benchmark_time": true,
+  "candidate_matrices": [
+    {
+      "candidate_id": "qwen3.8-27b-bf16",
+      "model": "Qwen/Qwen3.8-27B",
+      "model_revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+      "published_weight_bytes": 55615875685,
+      "minimum_benchmark_vram_gb": 80,
+      "eligible_vram_tiers_gb": [80],
+      "selected_provider_hardware_id": null,
+      "compatibility_verified": false,
+      "benchmark_complete": false
+    },
+    {
+      "candidate_id": "qwen3.8-27b-fp8",
+      "model": "Qwen/Qwen3.8-27B-FP8",
+      "model_revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+      "published_weight_bytes": 30879676248,
+      "minimum_benchmark_vram_gb": 48,
+      "eligible_vram_tiers_gb": [48, 80],
+      "selected_provider_hardware_id": null,
+      "compatibility_verified": false,
+      "benchmark_complete": false
+    }
+  ],
+  "selection_rule": "lowest_measured_total_cost_per_successful_request_subject_to_quality_latency_streaming_and_memory_gates",
+  "paid_benchmark_authorized": false,
+  "deployment_authorized": false,
+  "production_routing_authorized": false
+}

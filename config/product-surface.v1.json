@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "assistant_name": "Kova",
+  "physical_engines": ["kova-core", "kova-ultra"],
+  "auto_route": {
+    "id": "kova-auto",
+    "display_name": "Kova Auto",
+    "selection": "server_authoritative",
+    "eligible_engines": ["kova-core", "kova-ultra"],
+    "classifier_implemented": true,
+    "deployment_ready": false
+  },
+  "chat_modes": [
+    { "id": "instant", "display_name": "Kova 5.6 Cosmo", "family": "cosmo", "engine": "kova-core", "reasoning_effort": "low", "response_style": "direct", "activity_updates": false, "deployment_ready": false },
+    { "id": "medium", "display_name": "Kova 5.6 Orion", "family": "orion", "engine": "kova-core", "reasoning_effort": "medium", "response_style": "plan_answer_check", "activity_updates": false, "deployment_ready": false },
+    { "id": "high", "display_name": "Kova 5.6 Nova", "family": "nova", "engine": "kova-core", "reasoning_effort": "xhigh", "response_style": "multi_pass", "activity_updates": true, "deployment_ready": false },
+    { "id": "extra-high", "display_name": "Nova Extra High", "family": "nova", "engine": "kova-core", "reasoning_effort": "xhigh", "response_style": "deeper_multi_pass", "activity_updates": true, "deployment_ready": false },
+    { "id": "max", "display_name": "Nova Max", "family": "nova", "engine": "kova-core", "reasoning_effort": "xhigh", "response_style": "maximum_single_engine", "activity_updates": true, "deployment_ready": false },
+    { "id": "ultra", "display_name": "Kova Ultra", "family": "ultra", "engine": "kova-ultra", "reasoning_effort": "xhigh", "response_style": "multi_agent_judge_synthesis", "activity_updates": true, "deployment_ready": false }
+  ],
+  "work_families": [
+    { "id": "cosmo", "display_name": "Kova 5.6 Cosmo", "engine_meaning": "behavior_profile_not_separate_foundation_weights" },
+    { "id": "orion", "display_name": "Kova 5.6 Orion", "engine_meaning": "behavior_profile_not_separate_foundation_weights" },
+    { "id": "nova", "display_name": "Kova 5.6 Nova", "engine_meaning": "behavior_profile_not_separate_foundation_weights" }
+  ],
+  "work_efforts": ["Light", "Medium", "High", "Extra High", "Max", "Ultra"],
+  "effort_profiles": [
+    { "name": "Light", "engine": "kova-core", "engine_effort": "low", "maximum_output_tokens": 2048, "activity_updates": true },
+    { "name": "Medium", "engine": "kova-core", "engine_effort": "medium", "maximum_output_tokens": 4096, "activity_updates": true },
+    { "name": "High", "engine": "kova-core", "engine_effort": "xhigh", "maximum_output_tokens": 8192, "activity_updates": true },
+    { "name": "Extra High", "engine": "kova-core", "engine_effort": "xhigh", "maximum_output_tokens": 16384, "activity_updates": true },
+    { "name": "Max", "engine": "kova-core", "engine_effort": "xhigh", "maximum_output_tokens": 24576, "activity_updates": true },
+    { "name": "Ultra", "engine": "kova-ultra", "engine_effort": "xhigh", "maximum_output_tokens": 32768, "activity_updates": true }
+  ],
+  "deep_mode_experience": {
+    "preamble_before_long_work": true,
+    "truthful_activity_events": true,
+    "clarification_policy": "ask_only_when_missing_information_materially_changes_the_result",
+    "status_source": "verified_runtime_and_tool_events_only",
+    "hidden_chain_of_thought_exposed": false
+  }
+}

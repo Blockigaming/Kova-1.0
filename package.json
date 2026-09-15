@@ -9,7 +9,11 @@
     "dataset:compile": "node scripts/compile-dataset.mjs",
     "training:command": "node scripts/training-command.mjs",
     "training:execute": "node scripts/training-command.mjs --execute",
-    "preflight": "npm run validate:data && npm run validate:stack",
-    "test": "node --test tests/*.test.mjs"
+    "pricing:floor": "node scripts/price-floor.mjs",
+    "benchmark:candidate:summarize": "node scripts/summarize-benchmark.mjs",
+    "benchmark:core:summarize": "node scripts/summarize-core-benchmark.mjs",
+    "evaluate:offline": "python3 -m evaluation.offline",
+    "preflight": "npm run validate:data && npm run validate:stack && npm run evaluate:offline",
+    "test": "node --test tests/*.test.mjs && python3 -m unittest worker.test_handler router.test_policy router.test_auto core.test_adapter ultra.test_orchestrator evaluation.test_offline"
   }
 }

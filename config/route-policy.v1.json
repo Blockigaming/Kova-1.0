@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "status": "source_only",
+  "shared_core_weights": true,
+  "chat": [
+    { "id": "instant", "name": "Kova 5.6 Cosmo", "engine": "kova-core", "profile": "cosmo", "reasoning_effort": "low", "thinking_enabled": false, "planning_passes": 0, "answer_passes": 1, "critic_passes": 0, "verification_passes": 0, "activity_updates": false, "behavior_contract_id": "chat_instant_direct" },
+    { "id": "medium", "name": "Kova 5.6 Orion", "engine": "kova-core", "profile": "orion", "reasoning_effort": "medium", "thinking_enabled": true, "planning_passes": 1, "answer_passes": 1, "critic_passes": 0, "verification_passes": 1, "activity_updates": false, "behavior_contract_id": "chat_medium_balanced" },
+    { "id": "high", "name": "Kova 5.6 Nova", "engine": "kova-core", "profile": "nova", "reasoning_effort": "xhigh", "thinking_enabled": true, "planning_passes": 1, "answer_passes": 1, "critic_passes": 1, "verification_passes": 1, "activity_updates": true, "behavior_contract_id": "chat_high_rigorous" },
+    { "id": "extra-high", "name": "Nova Extra High", "engine": "kova-core", "profile": "nova", "reasoning_effort": "xhigh", "thinking_enabled": true, "planning_passes": 2, "answer_passes": 2, "critic_passes": 2, "verification_passes": 2, "activity_updates": true, "behavior_contract_id": "chat_extra_high_deep" },
+    { "id": "max", "name": "Nova Max", "engine": "kova-core", "profile": "nova", "reasoning_effort": "xhigh", "thinking_enabled": true, "planning_passes": 2, "answer_passes": 3, "critic_passes": 2, "verification_passes": 3, "activity_updates": true, "behavior_contract_id": "chat_max_single_engine" },
+    { "id": "ultra", "name": "Kova Ultra", "engine": "kova-ultra", "profile": "ultra", "reasoning_effort": "xhigh", "thinking_enabled": true, "dynamic_agent_minimum": 2, "dynamic_agent_maximum": 5, "judge": true, "synthesis": true, "activity_updates": true, "behavior_contract_id": "chat_ultra_multi_specialist" }
+  ],
+  "work": {
+    "families": ["cosmo", "orion", "nova"],
+    "family_profiles": [
+      { "id": "cosmo", "display_name": "Kova 5.6 Cosmo", "behavior_contract_id": "work_cosmo_action_first", "answer_style": "concise_action_first", "tool_posture": "minimum_necessary" },
+      { "id": "orion", "display_name": "Kova 5.6 Orion", "behavior_contract_id": "work_orion_balanced", "answer_style": "balanced_explanatory", "tool_posture": "verify_when_material" },
+      { "id": "nova", "display_name": "Kova 5.6 Nova", "behavior_contract_id": "work_nova_rigorous", "answer_style": "rigorous_comprehensive", "tool_posture": "evidence_first" }
+    ],
+    "efforts": ["Light", "Medium", "High", "Extra High", "Max", "Ultra"],
+    "effort_profiles": [
+      { "name": "Light", "engine": "kova-core", "reasoning_effort": "low", "thinking_enabled": false, "planning_passes": 0, "answer_passes": 1, "critic_passes": 0, "verification_passes": 0, "maximum_output_tokens": 2048 },
+      { "name": "Medium", "engine": "kova-core", "reasoning_effort": "medium", "thinking_enabled": true, "planning_passes": 1, "answer_passes": 1, "critic_passes": 0, "verification_passes": 1, "maximum_output_tokens": 4096 },
+      { "name": "High", "engine": "kova-core", "reasoning_effort": "xhigh", "thinking_enabled": true, "planning_passes": 1, "answer_passes": 2, "critic_passes": 1, "verification_passes": 1, "maximum_output_tokens": 8192 },
+      { "name": "Extra High", "engine": "kova-core", "reasoning_effort": "xhigh", "thinking_enabled": true, "planning_passes": 2, "answer_passes": 3, "critic_passes": 2, "verification_passes": 2, "maximum_output_tokens": 16384 },
+      { "name": "Max", "engine": "kova-core", "reasoning_effort": "xhigh", "thinking_enabled": true, "planning_passes": 2, "answer_passes": 4, "critic_passes": 2, "verification_passes": 3, "maximum_output_tokens": 24576 },
+      { "name": "Ultra", "engine": "kova-ultra", "reasoning_effort": "xhigh", "thinking_enabled": true, "maximum_output_tokens": 32768 }
+    ],
+    "ultra_effort_uses_engine": "kova-ultra",
+    "other_efforts_use_engine": "kova-core",
+    "family_changes_behavior_not_foundation_weights": true
+  },
+  "auto": {
+    "id": "kova-auto",
+    "selection": "server_authoritative",
+    "rules_before_classifier": true,
+    "ultra_requires_entitlement_and_budget": true,
+    "classifier_implemented": true,
+    "classifier_type": "deterministic_server_rules_v1",
+    "free_plan_route_cap": "instant",
+    "ultra_entitlement": "pro",
+    "ultra_budget_gate_required": true,
+    "production_ready": false
+  },
+  "caller_forbidden_fields": ["model", "provider", "engine", "reasoning_effort", "planning_passes", "answer_passes", "critic_passes", "verification_passes", "dynamic_agent_maximum", "behavior_contract_id", "behavior_instruction", "display_name", "family_display_name"]
+}

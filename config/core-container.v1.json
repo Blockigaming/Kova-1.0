@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "status": "source_only_build_blocked",
+  "engine": "kova-core",
+  "provider": "runpod_serverless",
+  "role": "upstream_inference_server_candidate",
+  "upstream_worker": {
+    "repository": "runpod-workers/worker-vllm",
+    "release_tag": "v2.27.0",
+    "source_commit": "76054c22c79c515f07065f523598d8efb2f9b682",
+    "bundled_vllm_version": "0.29.0",
+    "candidate_image_reference": "runpod/worker-v1-vllm:v2.27.0",
+    "resolved_image_digest": null,
+    "verified_on": "2026-09-15"
+  },
+  "integration": {
+    "selected": false,
+    "kova_benchmark_contract": "worker/handler.py",
+    "openai_compatible_api_required": true,
+    "streaming_required": true,
+    "hidden_reasoning_filter_required": true,
+    "model_compatibility_verified": false,
+    "runtime_identity_probe_verified": false,
+    "provider_tokenizer_recount_verified": false
+  },
+  "candidate_runtime_configuration": {
+    "source": "trusted_server_configuration",
+    "client_overrides_allowed": false,
+    "required_environment": ["MODEL_NAME", "MODEL_REVISION"],
+    "allowed_tuning_environment": [
+      "MAX_MODEL_LEN",
+      "GPU_MEMORY_UTILIZATION",
+      "MAX_NUM_SEQS",
+      "TENSOR_PARALLEL_SIZE"
+    ],
+    "profiles": [
+      {
+        "candidate_id": "qwen3.8-27b-bf16",
+        "MODEL_NAME": "Qwen/Qwen3.8-27B",
+        "MODEL_REVISION": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+      },
+      {
+        "candidate_id": "qwen3.8-27b-fp8",
+        "MODEL_NAME": "Qwen/Qwen3.8-27B-FP8",
+        "MODEL_REVISION": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a"
+      }
+    ]
+  },
+  "context": {
+    "native_context_tokens": 262144,
+    "selected_max_model_len": null,
+    "selection_status": "benchmark_required",
+    "full_native_context_fit_claimed": false
+  },
+  "weights": {
+    "runtime_model_download_allowed": false,
+    "network_volume_enabled": false,
+    "selected_packaging_strategy": null,
+    "packaging_strategy_candidates": [
+      "model_baked_into_derived_image",
+      "immutable_cached_artifact"
+    ],
+    "model_baked_into_image": false,
+    "immutable_cached_artifact_present": false,
+    "cache_warmth_verified": false
+  },
+  "endpoint": {
+    "type_candidates": ["queue_based", "load_balancing"],
+    "selected_type": null,
+    "cold_scale_to_zero_compatibility_verified": false
+  },
+  "safety": {
+    "image_pulled": false,
+    "image_built": false,
+    "compatibility_tested": false,
+    "paid_benchmark_authorized": false,
+    "endpoint_creation_authorized": false,
+    "deployment_authorized": false,
+    "production_routing_authorized": false,
+    "runtime_package_installs_allowed": false
+  },
+  "source_evidence": {
+    "runpod_vllm_guide": "https://docs.runpod.io/serverless/vllm/get-started",
+    "runpod_vllm_environment": "https://docs.runpod.io/serverless/vllm/environment-variables",
+    "upstream_release": "https://github.com/runpod-workers/worker-vllm/releases/tag/v2.27.0",
+    "upstream_source_commit": "https://github.com/runpod-workers/worker-vllm/commit/76054c22c79c515f07065f523598d8efb2f9b682"
+  }
+}

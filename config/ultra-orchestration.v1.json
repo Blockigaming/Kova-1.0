@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "status": "source_only",
+  "engine": "kova-ultra",
+  "provider": "runpod_serverless",
+  "endpoint_name_reserved": "kova-ultra",
+  "endpoint_deployed": false,
+  "worker_type": "flex",
+  "active_workers": 0,
+  "required_entitlement": "pro",
+  "minimum_specialists": 2,
+  "maximum_specialists": 5,
+  "maximum_debate_rounds": 1,
+  "required_stages": ["specialists", "disagreement_check", "judge", "conditional_debate", "synthesis"],
+  "conditional_debate_trigger": "judge_detected_material_disagreement",
+  "activity_policy": "emit_only_after_corresponding_runtime_operation_starts",
+  "hidden_chain_of_thought_exposed": false,
+  "selected_model": null,
+  "paid_execution_authorized": false,
+  "deployment_authorized": false,
+  "production_routing_authorized": false
+}

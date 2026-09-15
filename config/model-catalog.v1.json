@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "status": "two_engine_verification_in_progress",
+  "default_route": "kova-auto",
+  "physical_engines": [
+    {
+      "id": "kova-core",
+      "display_name": "Kova Core",
+      "provider": "runpod_serverless",
+      "endpoint_name_reserved": "kova-core",
+      "upstream_model": null,
+      "selection": "benchmark_required",
+      "deployment_ready": false
+    },
+    {
+      "id": "kova-ultra",
+      "display_name": "Kova Ultra Engine",
+      "provider": "runpod_serverless",
+      "endpoint_name_reserved": "kova-ultra",
+      "upstream_model": null,
+      "selection": "orchestrator_and_worker_model_benchmark_required",
+      "deployment_ready": false
+    }
+  ],
+  "public_profiles": [
+    { "id": "kova-5.6-cosmo", "display_name": "Kova 5.6 Cosmo", "engine": "kova-core", "separate_foundation_weights": false, "deployment_ready": false },
+    { "id": "kova-5.6-orion", "display_name": "Kova 5.6 Orion", "engine": "kova-core", "separate_foundation_weights": false, "deployment_ready": false },
+    { "id": "kova-5.6-nova", "display_name": "Kova 5.6 Nova", "engine": "kova-core", "separate_foundation_weights": false, "deployment_ready": false },
+    { "id": "kova-ultra-mode", "display_name": "Kova Ultra", "engine": "kova-ultra", "separate_foundation_weights": false, "deployment_ready": false }
+  ],
+  "user_facing_hierarchy": [
+    { "route_id": "kova-auto", "display_name": "Kova Auto", "meaning": "server_selects_reasoning_level" },
+    { "route_id": "instant", "display_name": "Kova 5.6 Cosmo", "meaning": "fastest_core_mode" },
+    { "route_id": "medium", "display_name": "Kova 5.6 Orion", "meaning": "balanced_core_mode" },
+    { "route_id": "high", "display_name": "Kova 5.6 Nova", "meaning": "deep_core_mode" },
+    { "route_id": "extra-high", "display_name": "Nova Extra High", "meaning": "deeper_nova_core_mode" },
+    { "route_id": "max", "display_name": "Nova Max", "meaning": "maximum_single_core_mode" },
+    { "route_id": "ultra", "display_name": "Kova Ultra", "meaning": "multi_agent_engine" }
+  ],
+  "evaluated_self_hosted_candidates": [
+    { "model": "Qwen/Qwen3.8-27B", "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0", "license": "Apache-2.0", "status": "source_verified_hardware_unbenchmarked" },
+    { "model": "Qwen/Qwen3.8-27B-FP8", "revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a", "license": "Apache-2.0", "status": "source_verified_hardware_unbenchmarked" },
+    { "model": "Qwen/Qwen3.8-2.4T-A95B", "revision": "207bd685a7e3696cfaff12ded7c6a7ea0f88c996", "license": "Qwen3.8-Max", "status": "source_verified_hardware_and_license_blocked" }
+  ]
+}

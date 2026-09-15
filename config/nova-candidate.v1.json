@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "candidate_id": "kova-nova-qwen3.8-a95b-v0",
+  "display_name": "Kova 5.6 Nova",
+  "base_model": "Qwen/Qwen3.8-2.4T-A95B",
+  "base_revision": "207bd685a7e3696cfaff12ded7c6a7ea0f88c996",
+  "base_license": "Qwen3.8-Max",
+  "pipeline_tag": "text-generation",
+  "total_parameters": 2446182725504,
+  "active_parameters": 95000000000,
+  "text_only": true,
+  "thinking_required": true,
+  "reasoning_efforts": ["low", "medium", "xhigh"],
+  "license_obligations": {
+    "retain_copyright_and_permission_notice": true,
+    "prominent_model_name_threshold": {
+      "monthly_active_users": 100000000,
+      "monthly_revenue_usd": 20000000
+    },
+    "separate_license_threshold": {
+      "ai_work_assistant_or_model_service_revenue_usd_in_consecutive_12_months": 50000000
+    },
+    "commercial_license_review_required_before_deployment": true
+  },
+  "execution": {
+    "authorized": false,
+    "runpod_hardware_verified": false,
+    "single_80gb_gpu_claim_rejected": true
+  }
+}
