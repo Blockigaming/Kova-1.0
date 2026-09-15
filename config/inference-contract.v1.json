@@ -47,6 +47,7 @@
     "gpu_rate_per_second_usd_semantics": "total_worker_gpu_rate_for_configured_gpu_count",
     "lifecycle_cost_allocation": "startup_idle_equal_per_request_active_proportional_to_observed_attempt_inference",
     "billed_active_window_must_cover_longest_attempt": true,
+    "billed_active_window_must_cover_longest_sequential_request_path": true,
     "attempt_durations_are_cost_diagnostics_only": true,
     "route_completion_accounting": "core_stage_aware_only",
     "route_time_to_first_token": "startup_plus_all_attempt_queues_and_pre_public_stage_durations_plus_final_public_ttft"

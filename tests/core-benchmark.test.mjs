@@ -226,6 +226,15 @@ test("Core benchmark rejects a lifecycle shorter than its longest attempt", () =
   ]), /longest attempt exceeds billed active window/);
 });
 
+test("Core benchmark requires active time for the longest sequential request path", () => {
+  assert.throws(() => summarizeCoreBenchmark([
+    attempt({attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
+    warmAttempt({attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
+    warmAttempt({attempt_id: "verification", route_id: "medium", stage_id: "verification-1", reasoning_effort: "medium"}),
+    close({billed_lifecycle_ms: 11000}),
+  ]), /sequential request path exceeds billed active window/);
+});
+
 test("Core benchmark counts quarantined attempts without treating them as success", () => {
   const result = summarizeCoreBenchmark([
     attempt({outcome: "quarantined", time_to_first_token_ms: 500}), close(),

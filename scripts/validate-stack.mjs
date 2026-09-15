@@ -125,6 +125,7 @@ if (
   inference.telemetry.gpu_rate_per_second_usd_semantics !== "total_worker_gpu_rate_for_configured_gpu_count" ||
   inference.telemetry.lifecycle_cost_allocation !== "startup_idle_equal_per_request_active_proportional_to_observed_attempt_inference" ||
   inference.telemetry.billed_active_window_must_cover_longest_attempt !== true ||
+  inference.telemetry.billed_active_window_must_cover_longest_sequential_request_path !== true ||
   inference.telemetry.attempt_durations_are_cost_diagnostics_only !== true ||
   !inference.telemetry.route_time_to_first_token.includes("pre_public_stage_durations")
 ) throw new Error("inference_executor_contract_invalid");

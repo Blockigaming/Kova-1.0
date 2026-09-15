@@ -63,7 +63,8 @@ are allocated without changing the lifecycle total: startup and idle are shared
 equally per logical request, while active-window cost is weighted by observed
 attempt inference time. The recorded GPU rate is the total worker rate for its
 configured GPU count, and the billed active window must contain the longest
-individual inference attempt. RunPod-side route TTFT includes cold startup, all
+individual inference attempt and the longest sequential per-request inference path.
+RunPod-side route TTFT includes cold startup, all
 attempt queues and retries, every sequential private DAG stage, and the final
 public stage's first visible delta. It reports RunPod compute
 only, not a publishable customer price; Azure, tools, storage, payment processing,

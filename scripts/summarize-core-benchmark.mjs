@@ -261,6 +261,15 @@ export function summarizeCoreBenchmark(records) {
     if (longestInferenceMs > activeMs) {
       throw new Error(`lifecycle ${lifecycleId} longest attempt exceeds billed active window`);
     }
+    const requestIds = [...new Set(lifecycle.attempts.map((record) => record.request_id))];
+    const longestSequentialRequestMs = Math.max(...requestIds.map((requestId) =>
+      lifecycle.attempts
+        .filter((record) => record.request_id === requestId)
+        .reduce((total, record) => total + record.inference_ms, 0)
+    ));
+    if (longestSequentialRequestMs > activeMs) {
+      throw new Error(`lifecycle ${lifecycleId} sequential request path exceeds billed active window`);
+    }
   }
 
   const pricedAttempts = attempts.map((record) => {
