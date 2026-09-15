@@ -106,7 +106,11 @@ class RunPodVllmAdapterTests(unittest.TestCase):
         self.assertEqual(chunks[0]["choices"][0]["delta"]["content"], content)
 
     def test_accepts_crlf_split_across_fragments(self):
-        chunks = list(parse_raw_sse(['data: {"choices": []}\r', "\n\r", "\ndata: [DONE]\r", "\n\r", "\n"]))
+        chunks = list(
+            parse_raw_sse(
+                ['data: {"choices": []}\r', "\n\r", "\ndata: [DONE]\r", "\n\r", "\n"]
+            )
+        )
         self.assertEqual(chunks, [{"choices": []}])
 
     def test_preserves_tool_call_fragments_without_interpreting_them(self):
