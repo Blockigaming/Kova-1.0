@@ -87,6 +87,14 @@ class RunPodVllmAdapterTests(unittest.TestCase):
         self.assertEqual(chunks[-1]["usage"]["completion_tokens"], 2)
         self.assertEqual(chunks[-2]["choices"][0]["finish_reason"], "stop")
 
+    def test_decodes_utf8_split_across_byte_fragments(self):
+        encoded = (
+            'data: {"choices":[{"delta":{"content":"café 東京"}}]}\n\n'
+            "data: [DONE]\n\n"
+        ).encode("utf-8")
+        chunks = list(parse_raw_sse([encoded[index : index + 1] for index in range(len(encoded))]))
+        self.assertEqual(chunks[0]["choices"][0]["delta"]["content"], "café 東京")
+
     def test_preserves_tool_call_fragments_without_interpreting_them(self):
         fragments = [
             'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_","type":"function","function":{"name":"look","arguments":"{\\"q\\":"}}]}}]}\n\n',
@@ -120,6 +128,7 @@ class RunPodVllmAdapterTests(unittest.TestCase):
     def test_rejects_invalid_stream_encodings_and_payloads(self):
         cases = (
             [b"\xff"],
+            [b"\xe2\x82"],
             ["\ud800"],
             ["event: message\ndata: {}\n\ndata: [DONE]\n\n"],
             ["data: not-json\n\ndata: [DONE]\n\n"],
@@ -129,6 +138,14 @@ class RunPodVllmAdapterTests(unittest.TestCase):
         for fragments in cases:
             with self.subTest(fragments=fragments), self.assertRaises(RunPodVllmError):
                 list(parse_raw_sse(fragments))
+
+    def test_rejects_empty_stream_fragments_without_waiting_for_progress(self):
+        def stalled():
+            while True:
+                yield b""
+
+        with self.assertRaisesRegex(RunPodVllmError, "must not be empty"):
+            list(parse_raw_sse(stalled()))
 
     def test_requires_one_final_terminal_marker_and_complete_events(self):
         cases = (
@@ -142,6 +159,7 @@ class RunPodVllmAdapterTests(unittest.TestCase):
                 list(parse_raw_sse(fragments))
 
     def test_enforces_event_and_buffer_limits(self):
+        self.assertGreaterEqual(MAX_SSE_EVENTS, 24_576 + 3)
         too_many = ["data: {}\n\n" * (MAX_SSE_EVENTS + 1), "data: [DONE]\n\n"]
         with self.assertRaisesRegex(RunPodVllmError, "too many"):
             list(parse_raw_sse(too_many))
