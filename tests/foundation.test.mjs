@@ -51,6 +51,8 @@ test("Runpod plan scales to zero and stays blocked from paid execution", () => {
   assert.equal(config.billing.flat_rate_plan, false);
   assert.equal(config.billing.auto_pay_enabled, false);
   assert.equal(config.billing.automatic_credit_reload_allowed, false);
+  assert.equal(config.model_storage.runtime_model_download_allowed, false);
+  assert.equal(config.model_storage.network_volume_enabled, false);
   assert.equal(config.safety.paid_execution_authorized, false);
   assert.equal(config.safety.deployment_authorized, false);
   assert.deepEqual(config.endpoints.map((endpoint) => endpoint.id), ["kova-core", "kova-ultra"]);
@@ -150,8 +152,15 @@ test("Core container pins upstream source while every build and deployment actio
     "qwen3.8-27b-bf16", "qwen3.8-27b-fp8",
   ]);
   assert.equal(config.context.selected_max_model_len, null);
+  assert.equal(config.weights.runtime_model_download_allowed, false);
+  assert.equal(config.weights.network_volume_enabled, false);
   assert.equal(config.weights.selected_packaging_strategy, null);
   assert.equal(config.endpoint.selected_type, null);
+  assert.deepEqual(Object.keys(config.safety).sort(), [
+    "compatibility_tested", "deployment_authorized", "endpoint_creation_authorized",
+    "image_built", "image_pulled", "paid_benchmark_authorized",
+    "production_routing_authorized", "runtime_package_installs_allowed",
+  ]);
   assert.ok(Object.values(config.safety).every((value) => value === false));
 });
 

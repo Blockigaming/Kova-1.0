@@ -227,6 +227,11 @@ if (
     model.context_tokens !== 262144 || model.compatibility_verified !== false || model.benchmark_complete !== false
   )
 ) throw new Error("verified_unbenchmarked_core_candidates_required");
+const requiredContainerSafetyKeys = [
+  "compatibility_tested", "deployment_authorized", "endpoint_creation_authorized",
+  "image_built", "image_pulled", "paid_benchmark_authorized",
+  "production_routing_authorized", "runtime_package_installs_allowed",
+];
 if (
   coreContainer.status !== "source_only_build_blocked" || coreContainer.engine !== "kova-core" ||
   coreContainer.provider !== "runpod_serverless" ||
@@ -252,12 +257,15 @@ if (
   coreContainer.endpoint.type_candidates.join(",") !== "queue_based,load_balancing" ||
   coreContainer.endpoint.selected_type !== null ||
   coreContainer.endpoint.cold_scale_to_zero_compatibility_verified !== false ||
-  Object.values(coreContainer.safety).some((value) => value !== false)
+  Object.keys(coreContainer.safety).sort().join(",") !== requiredContainerSafetyKeys.join(",") ||
+  requiredContainerSafetyKeys.some((key) => coreContainer.safety[key] !== false)
 ) throw new Error("pinned_core_container_candidate_must_stay_unbuilt_and_blocked");
 if (
   coreContainer.candidate_runtime_configuration.source !== "trusted_server_configuration" ||
   coreContainer.candidate_runtime_configuration.client_overrides_allowed !== false ||
   coreContainer.candidate_runtime_configuration.required_environment.join(",") !== "MODEL_NAME,MODEL_REVISION" ||
+  coreContainer.candidate_runtime_configuration.allowed_tuning_environment.join(",") !==
+    "MAX_MODEL_LEN,GPU_MEMORY_UTILIZATION,MAX_NUM_SEQS,TENSOR_PARALLEL_SIZE" ||
   coreContainer.candidate_runtime_configuration.profiles.length !== coreServing.candidates.length
 ) throw new Error("core_container_candidate_configuration_must_be_trusted");
 for (const servingCandidate of coreServing.candidates) {
@@ -270,8 +278,10 @@ for (const servingCandidate of coreServing.candidates) {
   ) throw new Error(`core_container_profile_mismatch:${servingCandidate.id}`);
 }
 if (
-  coreContainer.weights.runtime_model_download_allowed !== runpod.model_storage.runtime_model_download_allowed ||
-  coreContainer.weights.network_volume_enabled !== runpod.model_storage.network_volume_enabled ||
+  coreContainer.weights.runtime_model_download_allowed !== false ||
+  runpod.model_storage.runtime_model_download_allowed !== false ||
+  coreContainer.weights.network_volume_enabled !== false ||
+  runpod.model_storage.network_volume_enabled !== false ||
   coreContainer.weights.selected_packaging_strategy !== null ||
   coreContainer.weights.packaging_strategy_candidates.join(",") !==
     "model_baked_into_derived_image,immutable_cached_artifact" ||
