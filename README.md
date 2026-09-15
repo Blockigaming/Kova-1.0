@@ -55,9 +55,16 @@ completion and cannot support customer route pricing. It never calls RunPod.
 RunPod worker lifecycles and separates results by pinned model revision, GPU type
 and count, serving engine, endpoint type, container digest, and Kova route. A
 shutdown observation is recorded separately from request attempts. It requires one
-measured cold start and one measured shutdown tail per lifecycle, then shares that
-overhead equally across the logical requests served during the lifecycle. This lets
-one warm Core worker serve different routes without losing or duplicating cost. It reports RunPod compute
+measured cold start, one measured shutdown tail, and provider-reported total billed
+wall time per lifecycle. That billed wall time—not the sum of request attempts—is
+the authoritative cost basis, so warm gaps and overlapping requests are neither
+lost nor double-counted. The conserved startup, active-window, and idle components
+are allocated without changing the lifecycle total: startup and idle are shared
+equally per logical request, while active-window cost is weighted by observed
+attempt inference time. The recorded GPU rate is the total worker rate for its
+configured GPU count. RunPod-side route TTFT includes cold startup, all
+attempt queues and retries, every sequential private DAG stage, and the final
+public stage's first visible delta. It reports RunPod compute
 only, not a publishable customer price; Azure, tools, storage, payment processing,
 taxes, and other attributable costs must still be included.
 The request planner also requires a trusted provider tokenizer count, binds only
@@ -74,7 +81,10 @@ real streaming chunks; the worker assembles content, tool-call fragments, and us
 before sanitizing the result and measures first-visible-delta latency with its
 monotonic clock. That measurement is preserved if a later stream chunk fails;
 attempts with no visible public delta and all private non-stream stages record TTFT
-as unavailable (`null`) instead of inventing a value. Private stages use non-streaming responses. The worker pins its
+as unavailable (`null`) instead of inventing a value. Empty tool fragments do not
+start TTFT; truncated finish reasons and zero completion usage fail closed. A
+postflight runtime-integrity failure persists the paid attempt as quarantined before
+the error propagates. Private stages use non-streaming responses. The worker pins its
 candidate model server-side and fails closed if hidden reasoning appears in a separate
 field or embedded `<think>` block. The unquantized hardware matrix starts at 80 GB VRAM. No container image
 is selected until a compatible image digest and Qwen3.8 serving path are verified.

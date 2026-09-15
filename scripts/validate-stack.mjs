@@ -85,7 +85,7 @@ for (const field of [
 ]) {
   if (!inference.telemetry.attempt_record_required.includes(field)) throw new Error(`inference_attempt_telemetry_missing:${field}`);
 }
-for (const field of ["record_type", "close_event_id", "worker_lifecycle_id", "attributed_idle_timeout_ms"]) {
+for (const field of ["record_type", "close_event_id", "worker_lifecycle_id", "billed_lifecycle_ms", "attributed_idle_timeout_ms"]) {
   if (!inference.telemetry.lifecycle_close_record_required.includes(field)) throw new Error(`inference_lifecycle_telemetry_missing:${field}`);
 }
 if (inference.telemetry.lifecycle_close_source !== "trusted_runtime_shutdown_observation") throw new Error("trusted_lifecycle_close_required");
@@ -110,7 +110,17 @@ if (
   inference.streaming.time_to_first_token_source !== "worker_monotonic_clock_first_visible_public_delta" ||
   inference.streaming.time_to_first_token_unavailable_value !== null ||
   inference.streaming.private_stage_time_to_first_token_is_null !== true ||
-  inference.streaming.preserve_measured_time_to_first_token_on_stream_failure !== true
+  inference.streaming.preserve_measured_time_to_first_token_on_stream_failure !== true ||
+  inference.streaming.tool_time_to_first_token_requires_nonempty_fragment_data !== true ||
+  inference.streaming.accepted_finish_reasons.join(",") !== "stop,tool_calls" ||
+  inference.streaming.positive_completion_usage_required_for_success !== true ||
+  inference.telemetry.attempt_outcomes.join(",") !== "success,failed,quarantined" ||
+  inference.telemetry.postflight_integrity_failure_outcome !== "quarantined" ||
+  inference.telemetry.lifecycle_cost_source !== "provider_measured_billed_lifecycle_wall_time" ||
+  inference.telemetry.gpu_rate_per_second_usd_semantics !== "total_worker_gpu_rate_for_configured_gpu_count" ||
+  inference.telemetry.lifecycle_cost_allocation !== "startup_idle_equal_per_request_active_proportional_to_observed_attempt_inference" ||
+  inference.telemetry.attempt_durations_are_cost_diagnostics_only !== true ||
+  !inference.telemetry.route_time_to_first_token.includes("pre_public_stage_durations")
 ) throw new Error("inference_executor_contract_invalid");
 if (hardware.model !== candidate.base_model || hardware.paid_benchmark_authorized !== false) {
   throw new Error("hardware_benchmark_must_match_candidate_and_stay_blocked");

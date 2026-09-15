@@ -201,6 +201,7 @@ def _mapping(value, message):
 
 def _append_stream_tool_calls(states, fragments):
     _require(isinstance(fragments, list), "stream tool_calls must be an array")
+    contributed_visible_data = False
     for raw_fragment in fragments:
         fragment = _mapping(raw_fragment, "stream tool call must be an object")
         _require(
@@ -214,6 +215,7 @@ def _append_stream_tool_calls(states, fragments):
             part = fragment.get(field)
             _require(part is None or isinstance(part, str), f"invalid stream tool call {field}")
             if part:
+                contributed_visible_data = contributed_visible_data or bool(part.strip())
                 state[field] += part
         function = fragment.get("function")
         if function is not None:
@@ -226,7 +228,9 @@ def _append_stream_tool_calls(states, fragments):
                 part = function.get(field)
                 _require(part is None or isinstance(part, str), f"invalid stream tool function {field}")
                 if part:
+                    contributed_visible_data = contributed_visible_data or bool(part.strip())
                     state["function"][field] += part
+    return contributed_visible_data
 
 
 def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, timing_state):
@@ -252,6 +256,7 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
     tool_call_states = {}
     usage = None
     first_token_ns = None
+    finish_reason = None
     for raw_chunk in chunks:
         chunk = _mapping(raw_chunk, "stream chunk must be an object")
         if chunk.get("usage") is not None:
@@ -259,25 +264,34 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
         choices = chunk.get("choices", [])
         _require(isinstance(choices, list), "stream choices must be an array")
         for raw_choice in choices:
+            _require(finish_reason is None, "stream returned a choice after its terminal finish reason")
             choice = _mapping(raw_choice, "stream choice must be an object")
             _require(choice.get("index", 0) == 0, "stream returned an unexpected choice index")
             delta = _mapping(choice.get("delta"), "stream choice missing delta")
+            reason = choice.get("finish_reason")
+            _require(reason is None or isinstance(reason, str), "invalid stream finish_reason")
+            if reason is not None:
+                _require(finish_reason is None, "stream returned multiple finish reasons")
+                finish_reason = reason
             _require(delta.get("reasoning_content") in (None, ""), "engine returned hidden reasoning")
             content = delta.get("content")
             _require(content is None or isinstance(content, str), "stream content must be text or null")
             fragments = delta.get("tool_calls", [])
             _require(isinstance(fragments, list), "stream tool_calls must be an array")
-            if first_token_ns is None and (content or fragments):
+            meaningful_tool_fragment = _append_stream_tool_calls(tool_call_states, fragments)
+            if first_token_ns is None and (content or meaningful_tool_fragment):
                 first_token_ns = clock_ns()
                 timing_state["time_to_first_token_ms"] = max(0, first_token_ns - started_ns) / 1_000_000
             if content:
                 content_parts.append(content)
-            _append_stream_tool_calls(tool_call_states, fragments)
 
     finished_ns = clock_ns()
     tool_calls = [tool_call_states[index] for index in sorted(tool_call_states)]
     normalized = {
-        "choices": [{"message": {"content": "".join(content_parts), "tool_calls": tool_calls}}],
+        "choices": [{
+            "message": {"content": "".join(content_parts), "tool_calls": tool_calls},
+            "finish_reason": finish_reason,
+        }],
         "usage": usage,
     }
     return normalized, finished_ns
@@ -327,10 +341,14 @@ def sanitize_engine_response(request_id, response):
     _require(isinstance(first, dict), "engine choice must be an object")
     message = first.get("message")
     _require(isinstance(message, dict), "engine response missing message")
+    finish_reason = first.get("finish_reason")
+    _require(finish_reason in ("stop", "tool_calls"), "engine response is incomplete or has invalid finish_reason")
     content = message.get("content")
     tool_calls = _sanitized_tool_calls(message.get("tool_calls", []))
     _require(content is None or isinstance(content, str), "engine response content must be text or null")
     _require(bool(content) or bool(tool_calls), "engine response must contain content or tool_calls")
+    _require(finish_reason != "tool_calls" or bool(tool_calls), "tool-call finish_reason missing tool_calls")
+    _require(finish_reason != "stop" or not tool_calls, "stop finish_reason cannot contain tool_calls")
     _require(message.get("reasoning_content") in (None, ""), "engine returned hidden reasoning")
     lowered = (content or "").lower()
     _require("<think" not in lowered and "</think>" not in lowered, "engine embedded hidden reasoning in content")
@@ -338,7 +356,7 @@ def sanitize_engine_response(request_id, response):
     _require(isinstance(usage, dict), "engine response missing usage")
     input_tokens, output_tokens = _usage_tokens(response)
     _require(input_tokens > 0, "invalid input_tokens")
-    _require(output_tokens >= 0, "invalid output_tokens")
+    _require(output_tokens > 0, "invalid output_tokens")
     return {
         "request_id": request_id,
         "content": content or "",
@@ -385,7 +403,7 @@ def emit_lifecycle_close(runtime_close_probe, telemetry_sink, *, close_event_id_
     _require(callable(telemetry_sink), "telemetry sink missing")
     value = runtime_close_probe()
     required = {
-        "source", "worker_lifecycle_id", "attributed_idle_timeout_ms", "gpu_rate_per_second_usd",
+        "source", "worker_lifecycle_id", "billed_lifecycle_ms", "attributed_idle_timeout_ms", "gpu_rate_per_second_usd",
         "gpu_type_id", "gpu_count", "serving_engine", "endpoint_type", "container_image_digest",
     }
     _require(isinstance(value, dict) and set(value) == required, "invalid lifecycle close probe")
@@ -402,6 +420,9 @@ def emit_lifecycle_close(runtime_close_probe, telemetry_sink, *, close_event_id_
     validated = _validate_runtime_value(identity_probe)
     idle_ms = value["attributed_idle_timeout_ms"]
     _require(isinstance(idle_ms, (int, float)) and not isinstance(idle_ms, bool) and idle_ms > 0, "invalid attributed_idle_timeout_ms")
+    billed_ms = value["billed_lifecycle_ms"]
+    _require(isinstance(billed_ms, (int, float)) and not isinstance(billed_ms, bool) and billed_ms > 0, "invalid billed_lifecycle_ms")
+    _require(idle_ms <= billed_ms, "idle tail exceeds billed lifecycle")
     close_event_id = close_event_id_factory()
     _require(isinstance(close_event_id, str) and close_event_id, "invalid close_event_id")
     record = {
@@ -410,6 +431,7 @@ def emit_lifecycle_close(runtime_close_probe, telemetry_sink, *, close_event_id_
         "worker_lifecycle_id": validated["worker_lifecycle_id"],
         "model": MODEL,
         "model_revision": MODEL_REVISION,
+        "billed_lifecycle_ms": billed_ms,
         "attributed_idle_timeout_ms": idle_ms,
         "gpu_rate_per_second_usd": validated["gpu_rate_per_second_usd"],
         "gpu_type_id": validated["gpu_type_id"],
@@ -441,6 +463,8 @@ def handle_job(
     response = None
     finished_ns = None
     timing_state = {"time_to_first_token_ms": None}
+    result = None
+    operation_error = None
     try:
         response = inference_client(engine_request)
         response, finished_ns = consume_engine_response(
@@ -451,24 +475,37 @@ def handle_job(
             timing_state=timing_state,
         )
         result = sanitize_engine_response(value["request_id"], response)
-    except Exception:
+    except Exception as error:
+        operation_error = error
         if finished_ns is None:
             finished_ns = clock_ns()
-        after = validate_runtime_probe(runtime_probe, "after")
-        _require(all(after[field] == before[field] for field in RUNTIME_IDENTITY_FIELDS), "runtime identity changed during attempt")
-        elapsed_ms = max(0, finished_ns - started_ns) / 1_000_000
-        first_token_ms = timing_state["time_to_first_token_ms"]
-        _require(first_token_ms is None or first_token_ms <= elapsed_ms, "first token exceeds measured inference")
-        failed = _attempt_record(value, execution, attempt_id, "failed", elapsed_ms, first_token_ms, after, response)
-        telemetry_sink(failed)
-        raise
-    after = validate_runtime_probe(runtime_probe, "after")
-    _require(all(after[field] == before[field] for field in RUNTIME_IDENTITY_FIELDS), "runtime identity changed during attempt")
     elapsed_ms = max(0, finished_ns - started_ns) / 1_000_000
     first_token_ms = timing_state["time_to_first_token_ms"]
-    _require(first_token_ms is None or first_token_ms <= elapsed_ms, "first token exceeds measured inference")
-    _require(not execution["public_response"] or first_token_ms is not None, "public response missing first-token measurement")
-    succeeded = _attempt_record(value, execution, attempt_id, "success", elapsed_ms, first_token_ms, after, response)
-    telemetry_sink(succeeded)
-    result["benchmark"] = succeeded
+
+    try:
+        after = validate_runtime_probe(runtime_probe, "after")
+        _require(all(after[field] == before[field] for field in RUNTIME_IDENTITY_FIELDS), "runtime identity changed during attempt")
+        _require(first_token_ms is None or first_token_ms <= elapsed_ms, "first token exceeds measured inference")
+        _require(execution["public_response"] or first_token_ms is None, "private response cannot claim first-token measurement")
+        _require(
+            operation_error is not None or not execution["public_response"] or first_token_ms is not None,
+            "public response missing first-token measurement",
+        )
+    except Exception as integrity_error:
+        quarantined = _attempt_record(
+            value, execution, attempt_id, "quarantined", elapsed_ms, first_token_ms, before, response,
+        )
+        telemetry_sink(quarantined)
+        if operation_error is not None:
+            raise operation_error.with_traceback(operation_error.__traceback__) from integrity_error
+        raise
+
+    outcome = "failed" if operation_error is not None else "success"
+    record = _attempt_record(
+        value, execution, attempt_id, outcome, elapsed_ms, first_token_ms, after, response,
+    )
+    telemetry_sink(record)
+    if operation_error is not None:
+        raise operation_error.with_traceback(operation_error.__traceback__)
+    result["benchmark"] = record
     return result

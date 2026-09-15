@@ -4,7 +4,7 @@ import { pathToFileURL } from "node:url";
 const serving = JSON.parse(readFileSync(new URL("../config/core-serving.v1.json", import.meta.url), "utf8"));
 const routePolicy = JSON.parse(readFileSync(new URL("../config/route-policy.v1.json", import.meta.url), "utf8"));
 const candidates = new Map(serving.candidates.map((candidate) => [candidate.model, candidate]));
-const outcomes = new Set(["success", "failed"]);
+const outcomes = new Set(["success", "failed", "quarantined"]);
 const recordTypes = new Set(["attempt", "lifecycle_close"]);
 const commonRequired = [
   "record_type", "worker_lifecycle_id", "model", "model_revision", "gpu_type_id",
@@ -16,7 +16,7 @@ const attemptRequired = [
   "cold_start", "reasoning_effort", "worker_start_ms", "model_load_ms", "queue_ms", "inference_ms",
   "time_to_first_token_ms", "input_tokens", "output_tokens",
 ];
-const closeRequired = ["close_event_id", "attributed_idle_timeout_ms"];
+const closeRequired = ["close_event_id", "billed_lifecycle_ms", "attributed_idle_timeout_ms"];
 
 const average = (records, key) => records.length
   ? records.reduce((total, record) => total + record[key], 0) / records.length
@@ -69,34 +69,54 @@ function summarizeGroup(records, routeId, allocations) {
   const spec = routeSpecs.get(routeId);
   const successfulAttempts = records.filter((record) => record.outcome === "success");
   const requestIds = new Set(records.map((record) => record.request_id));
-  const successfulRequests = new Set([...requestIds].filter((requestId) => {
-    const attempts = successfulAttempts.filter((record) => record.request_id === requestId);
-    return spec.stages.every((stageId) => attempts.some((record) => record.stage_id === stageId));
-  }));
+  const requestTiming = [];
+  const successfulRequests = new Set();
+  for (const requestId of requestIds) {
+    const requestAttempts = records.filter((record) => record.request_id === requestId);
+    const successes = successfulAttempts.filter((record) => record.request_id === requestId);
+    for (const stageId of spec.stages) {
+      if (successes.filter((record) => record.stage_id === stageId).length > 1) {
+        throw new Error(`request ${requestId} contains duplicate successful stage ${stageId}`);
+      }
+    }
+    if (!spec.stages.every((stageId) => successes.some((record) => record.stage_id === stageId))) continue;
+    const publicAttempt = successes.find((record) => record.stage_id === spec.public_stage);
+    const requestTimeToFirstTokenMs = requestAttempts.reduce((total, record) => (
+      total + record.worker_start_ms + record.model_load_ms + record.queue_ms +
+      (record === publicAttempt ? record.time_to_first_token_ms : record.inference_ms)
+    ), 0);
+    successfulRequests.add(requestId);
+    requestTiming.push({request_id: requestId, request_time_to_first_token_ms: requestTimeToFirstTokenMs});
+  }
   const successfulPublicAttempts = successfulAttempts.filter((record) =>
     record.stage_id === spec.public_stage && successfulRequests.has(record.request_id),
   );
-  const inferenceCost = records.reduce((total, record) => total + record.inference_cost_usd, 0);
   const startupCost = allocations.reduce((total, item) => total + item.startup_cost_usd, 0);
+  const activeCost = allocations.reduce((total, item) => total + item.active_cost_usd, 0);
   const idleCost = allocations.reduce((total, item) => total + item.idle_cost_usd, 0);
-  const totalComputeCost = inferenceCost + startupCost + idleCost;
+  const totalComputeCost = allocations.reduce((total, item) => total + item.total_lifecycle_cost_usd, 0);
   return {
     attempts: records.length,
     worker_lifecycles: new Set(records.map((record) => record.worker_lifecycle_id)).size,
     logical_requests: requestIds.size,
     successful_requests: successfulRequests.size,
-    failed_attempts: records.length - successfulAttempts.length,
+    failed_attempts: records.filter((record) => record.outcome === "failed").length,
+    quarantined_attempts: records.filter((record) => record.outcome === "quarantined").length,
+    non_successful_attempts: records.length - successfulAttempts.length,
     total_attributable_compute_cost_usd: totalComputeCost,
-    total_inference_cost_usd: inferenceCost,
     allocated_startup_cost_usd: startupCost,
+    allocated_active_cost_usd: activeCost,
     allocated_idle_cost_usd: idleCost,
+    total_observed_attempt_inference_ms: records.reduce((total, record) => total + record.inference_ms, 0),
     average_compute_cost_per_successful_request_usd:
       successfulRequests.size ? totalComputeCost / successfulRequests.size : null,
     startup_share_of_compute_percent: totalComputeCost > 0 ? startupCost / totalComputeCost * 100 : null,
+    active_share_of_compute_percent: totalComputeCost > 0 ? activeCost / totalComputeCost * 100 : null,
     idle_share_of_compute_percent: totalComputeCost > 0 ? idleCost / totalComputeCost * 100 : null,
     average_success_stage_latency_ms: average(successfulAttempts, "inference_ms"),
-    average_public_time_to_first_token_ms: average(successfulPublicAttempts, "time_to_first_token_ms"),
+    average_request_time_to_first_token_ms: average(requestTiming, "request_time_to_first_token_ms"),
     average_public_output_tokens: average(successfulPublicAttempts, "output_tokens"),
+    successful_request_timing: requestTiming,
   };
 }
 
@@ -107,7 +127,6 @@ export function summarizeCoreBenchmark(records) {
   const requestRoutes = new Map();
   const lifecycles = new Map();
   const attempts = [];
-  const closes = [];
 
   for (const [index, record] of records.entries()) {
     for (const field of commonRequired) if (!(field in record)) throw new Error(`record ${index} missing ${field}`);
@@ -206,8 +225,13 @@ export function summarizeCoreBenchmark(records) {
       if (!Number.isFinite(record.attributed_idle_timeout_ms) || record.attributed_idle_timeout_ms <= 0) {
         throw new Error(`record ${index} lifecycle close missing measured idle tail`);
       }
+      if (!Number.isFinite(record.billed_lifecycle_ms) || record.billed_lifecycle_ms <= 0) {
+        throw new Error(`record ${index} lifecycle close missing billed wall time`);
+      }
+      if (record.attributed_idle_timeout_ms > record.billed_lifecycle_ms) {
+        throw new Error(`record ${index} idle tail exceeds billed lifecycle`);
+      }
       lifecycle.closes.push(record);
-      closes.push(record);
     }
     lifecycles.set(record.worker_lifecycle_id, lifecycle);
   }
@@ -219,40 +243,72 @@ export function summarizeCoreBenchmark(records) {
     }
     if (lifecycle.closes.length !== 1) throw new Error(`lifecycle ${lifecycleId} requires exactly one close event`);
     if (lifecycle.rates.size !== 1) throw new Error(`lifecycle ${lifecycleId} mixes GPU rates`);
+    const cold = lifecycle.attempts.find((record) => record.cold_start);
+    const startupMs = cold.worker_start_ms + cold.model_load_ms;
+    const close = lifecycle.closes[0];
+    if (startupMs + close.attributed_idle_timeout_ms > close.billed_lifecycle_ms) {
+      throw new Error(`lifecycle ${lifecycleId} startup and idle exceed billed wall time`);
+    }
   }
 
   const pricedAttempts = attempts.map((record) => {
-    const rate = record.gpu_rate_per_second_usd;
     const startupMs = record.worker_start_ms + record.model_load_ms;
     return {
       ...record,
       startup_ms: startupMs,
-      startup_cost_usd: startupMs / 1000 * rate,
-      inference_cost_usd: record.inference_ms / 1000 * rate,
       configuration_key: coreConfigurationKey(record),
     };
   });
-  const pricedCloses = closes.map((record) => ({
-    ...record,
-    idle_cost_usd: record.attributed_idle_timeout_ms / 1000 * record.gpu_rate_per_second_usd,
-    configuration_key: coreConfigurationKey(record),
-  }));
+  const pricedLifecycles = [];
+  for (const [lifecycleId, lifecycle] of lifecycles) {
+    const close = lifecycle.closes[0];
+    const cold = lifecycle.attempts.find((record) => record.cold_start);
+    const startupMs = cold.worker_start_ms + cold.model_load_ms;
+    const idleMs = close.attributed_idle_timeout_ms;
+    const activeMs = close.billed_lifecycle_ms - startupMs - idleMs;
+    const rate = close.gpu_rate_per_second_usd;
+    pricedLifecycles.push({
+      ...close,
+      configuration_key: lifecycle.configuration_key,
+      startup_ms: startupMs,
+      active_ms: activeMs,
+      startup_cost_usd: startupMs / 1000 * rate,
+      active_cost_usd: activeMs / 1000 * rate,
+      idle_cost_usd: idleMs / 1000 * rate,
+      billed_lifecycle_cost_usd: close.billed_lifecycle_ms / 1000 * rate,
+    });
+  }
 
   const lifecycleAllocations = [];
   for (const [lifecycleId, lifecycle] of lifecycles) {
     const lifecycleAttempts = pricedAttempts.filter((record) => record.worker_lifecycle_id === lifecycleId);
-    const close = pricedCloses.find((record) => record.worker_lifecycle_id === lifecycleId);
+    const pricedLifecycle = pricedLifecycles.find((record) => record.worker_lifecycle_id === lifecycleId);
     const requestIds = [...new Set(lifecycleAttempts.map((record) => record.request_id))];
-    const startupCost = lifecycleAttempts.reduce((total, record) => total + record.startup_cost_usd, 0);
+    const requestInferenceMs = new Map(requestIds.map((requestId) => [
+      requestId,
+      lifecycleAttempts
+        .filter((record) => record.request_id === requestId)
+        .reduce((total, record) => total + record.inference_ms, 0),
+    ]));
+    const totalInferenceMs = [...requestInferenceMs.values()].reduce((total, value) => total + value, 0);
     for (const requestId of requestIds) {
+      const activeShare = totalInferenceMs > 0
+        ? requestInferenceMs.get(requestId) / totalInferenceMs
+        : 1 / requestIds.length;
+      const startupCost = pricedLifecycle.startup_cost_usd / requestIds.length;
+      const activeCost = pricedLifecycle.active_cost_usd * activeShare;
+      const idleCost = pricedLifecycle.idle_cost_usd / requestIds.length;
       lifecycleAllocations.push({
         worker_lifecycle_id: lifecycleId,
         configuration_key: lifecycle.configuration_key,
         request_id: requestId,
         route_id: requestRoutes.get(requestId),
-        allocation_policy: "equal_share_per_logical_request_in_lifecycle",
-        startup_cost_usd: startupCost / requestIds.length,
-        idle_cost_usd: close.idle_cost_usd / requestIds.length,
+        allocation_policy: "startup_idle_equal_per_request_active_proportional_to_observed_attempt_inference",
+        observed_attempt_inference_ms: requestInferenceMs.get(requestId),
+        startup_cost_usd: startupCost,
+        active_cost_usd: activeCost,
+        idle_cost_usd: idleCost,
+        total_lifecycle_cost_usd: startupCost + activeCost + idleCost,
       });
     }
   }
@@ -272,22 +328,37 @@ export function summarizeCoreBenchmark(records) {
     }
   }
 
-  const totalStartupCost = pricedAttempts.reduce((total, record) => total + record.startup_cost_usd, 0);
-  const totalInferenceCost = pricedAttempts.reduce((total, record) => total + record.inference_cost_usd, 0);
-  const totalIdleCost = pricedCloses.reduce((total, record) => total + record.idle_cost_usd, 0);
+  const totalStartupCost = pricedLifecycles.reduce((total, record) => total + record.startup_cost_usd, 0);
+  const totalActiveCost = pricedLifecycles.reduce((total, record) => total + record.active_cost_usd, 0);
+  const totalIdleCost = pricedLifecycles.reduce((total, record) => total + record.idle_cost_usd, 0);
+  const totalBilledCost = pricedLifecycles.reduce((total, record) => total + record.billed_lifecycle_cost_usd, 0);
+  const allocatedCost = lifecycleAllocations.reduce((total, record) => total + record.total_lifecycle_cost_usd, 0);
+  const tolerance = Math.max(1, Math.abs(totalBilledCost)) * 1e-12;
+  if (Math.abs(totalStartupCost + totalActiveCost + totalIdleCost - totalBilledCost) > tolerance) {
+    throw new Error("lifecycle cost components do not conserve billed cost");
+  }
+  if (Math.abs(allocatedCost - totalBilledCost) > tolerance) {
+    throw new Error("request allocations do not conserve billed lifecycle cost");
+  }
   return {
-    schema_version: 4,
+    schema_version: 5,
     provider: "runpod_serverless",
     cost_scope: "runpod_compute_only_excludes_storage_app_tools_payment_and_taxes",
-    lifecycle_overhead_allocation: "equal_share_per_logical_request_in_lifecycle",
-    timing_contract: "worker_start_model_load_inference_and_idle_tail_are_nonoverlapping_server_measured_phases;ttft_is_public_stream_first_visible_delta_or_null_when_unavailable",
+    billing_contract: "provider_measured_billed_lifecycle_wall_time_is_authoritative;attempt_durations_are_diagnostics_only",
+    lifecycle_cost_allocation: "startup_and_idle_equal_per_request;active_proportional_to_observed_attempt_inference;all_components_conserved",
+    timing_contract: "request_ttft_includes_startup_queue_failed_retries_private_dag_stages_and_final_public_first_visible_delta",
     attempts: pricedAttempts.length,
     worker_lifecycles: lifecycles.size,
-    total_attributable_compute_cost_usd: totalStartupCost + totalInferenceCost + totalIdleCost,
+    total_billed_lifecycle_ms: pricedLifecycles.reduce((total, record) => total + record.billed_lifecycle_ms, 0),
+    total_observed_attempt_inference_ms: pricedAttempts.reduce((total, record) => total + record.inference_ms, 0),
+    total_attributable_compute_cost_usd: totalBilledCost,
+    total_startup_component_cost_usd: totalStartupCost,
+    total_active_component_cost_usd: totalActiveCost,
+    total_idle_component_cost_usd: totalIdleCost,
     by_configuration: byConfiguration,
     lifecycle_allocations: lifecycleAllocations,
     attempt_records: pricedAttempts,
-    lifecycle_close_records: pricedCloses,
+    lifecycle_close_records: pricedLifecycles,
   };
 }
 

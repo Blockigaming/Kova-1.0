@@ -65,14 +65,17 @@ class HandlerTests(unittest.TestCase):
     def token_counter(self, _model, _messages):
         return 10
 
-    def response(self, **message_overrides):
+    def response(self, finish_reason="stop", completion_tokens=1, **message_overrides):
         message = {"content": "answer", **message_overrides}
         return {
-            "choices": [{"message": message}],
-            "usage": {"prompt_tokens": 1, "completion_tokens": 1},
+            "choices": [{"message": message, "finish_reason": finish_reason}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": completion_tokens},
         }
 
-    def stream_response(self, *parts, reasoning_content=None, tool_calls=None):
+    def stream_response(
+        self, *parts, reasoning_content=None, tool_calls=None,
+        finish_reason=None, completion_tokens=1,
+    ):
         deltas = []
         for part in parts or ("answer",):
             delta = {"content": part}
@@ -81,7 +84,9 @@ class HandlerTests(unittest.TestCase):
             deltas.append({"choices": [{"delta": delta}]})
         if tool_calls is not None:
             deltas = [{"choices": [{"delta": {"content": None, "tool_calls": tool_calls}}]}]
-        deltas.append({"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1}})
+        terminal_reason = finish_reason or ("tool_calls" if tool_calls is not None else "stop")
+        deltas.append({"choices": [{"delta": {}, "finish_reason": terminal_reason}]})
+        deltas.append({"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": completion_tokens}})
         return iter(deltas)
 
     def handle(self, response=None, **kwargs):
@@ -269,6 +274,69 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(records[0]["time_to_first_token_ms"], 10)
         self.assertEqual(records[0]["inference_ms"], 50)
 
+    def test_postflight_failure_quarantines_paid_attempt_without_losing_it(self):
+        records = []
+        before = self.runtime_probe()("before")
+
+        def broken_postflight(phase):
+            if phase == "before":
+                return dict(before)
+            raise RuntimeError("postflight unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "postflight unavailable"):
+            handle_job(
+                {"input": self.request()}, lambda _payload: self.stream_response(),
+                broken_postflight, records.append,
+                execution_context=self.execution_context(), token_counter=self.token_counter,
+                clock_ns=Clock(0, 5_000_000, 10_000_000),
+                attempt_id_factory=lambda: "quarantined-attempt",
+            )
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0]["outcome"], "quarantined")
+        self.assertEqual(records[0]["inference_ms"], 10)
+
+    def test_postflight_failure_does_not_mask_provider_error(self):
+        records = []
+        before = self.runtime_probe()("before")
+
+        def broken_postflight(phase):
+            if phase == "before":
+                return dict(before)
+            raise RuntimeError("postflight unavailable")
+
+        def provider_failure(_payload):
+            raise ValueError("provider failed")
+
+        with self.assertRaisesRegex(ValueError, "provider failed") as raised:
+            handle_job(
+                {"input": self.request()}, provider_failure, broken_postflight, records.append,
+                execution_context=self.execution_context(), token_counter=self.token_counter,
+                clock_ns=Clock(0, 10_000_000),
+                attempt_id_factory=lambda: "quarantined-provider-attempt",
+            )
+        self.assertEqual(str(raised.exception.__cause__), "postflight unavailable")
+        self.assertEqual(records[0]["outcome"], "quarantined")
+
+    def test_postflight_identity_change_uses_validated_preflight_for_quarantine(self):
+        records = []
+        before = self.runtime_probe()("before")
+
+        def changed_postflight(phase):
+            if phase == "before":
+                return dict(before)
+            return {**before, "gpu_type_id": "unexpected GPU"}
+
+        with self.assertRaisesRegex(ValueError, "runtime identity changed"):
+            handle_job(
+                {"input": self.request()}, lambda _payload: self.stream_response(),
+                changed_postflight, records.append,
+                execution_context=self.execution_context(), token_counter=self.token_counter,
+                clock_ns=Clock(0, 5_000_000, 10_000_000),
+                attempt_id_factory=lambda: "changed-runtime-attempt",
+            )
+        self.assertEqual(records[0]["outcome"], "quarantined")
+        self.assertEqual(records[0]["gpu_type_id"], before["gpu_type_id"])
+
     def test_malformed_engine_message_fails_closed(self):
         for response, pattern in (
             ({"choices": [{}], "usage": {"prompt_tokens": 1, "completion_tokens": 1}}, "missing message"),
@@ -323,6 +391,45 @@ class HandlerTests(unittest.TestCase):
                     )
                 self.assertEqual(records[0]["outcome"], "failed")
 
+    def test_tool_stream_ttft_waits_for_meaningful_fragment(self):
+        records = []
+
+        def chunks():
+            yield {"choices": [{"delta": {"tool_calls": [{"index": 0}]}}]}
+            yield {"choices": [{"delta": {"tool_calls": [{
+                "index": 0, "id": "call-1", "type": "function",
+                "function": {"name": "lookup", "arguments": "{}"},
+            }]}}]}
+            yield {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]}
+            yield {"choices": [], "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+
+        result = handle_job(
+            {"input": self.request()}, lambda _payload: chunks(),
+            self.runtime_probe(), records.append,
+            execution_context=self.execution_context(), token_counter=self.token_counter,
+            clock_ns=Clock(0, 20_000_000, 50_000_000),
+            attempt_id_factory=lambda: "tool-attempt",
+        )
+        self.assertEqual(result["tool_calls"][0]["id"], "call-1")
+        self.assertEqual(records[0]["time_to_first_token_ms"], 20)
+
+    def test_truncation_and_zero_completion_usage_cannot_succeed(self):
+        for response, pattern in (
+            (self.stream_response("cut off", finish_reason="length"), "finish_reason"),
+            (self.stream_response("answer", completion_tokens=0), "output_tokens"),
+        ):
+            records = []
+            with self.subTest(pattern=pattern):
+                with self.assertRaisesRegex(ValueError, pattern):
+                    handle_job(
+                        {"input": self.request()}, lambda _payload: response,
+                        self.runtime_probe(), records.append,
+                        execution_context=self.execution_context(), token_counter=self.token_counter,
+                        clock_ns=Clock(0, 5_000_000, 10_000_000),
+                        attempt_id_factory=lambda: "incomplete-attempt",
+                    )
+                self.assertEqual(records[0]["outcome"], "failed")
+
     def test_server_measured_benchmark_telemetry_is_emitted_and_persisted(self):
         records = []
         result = handle_job(
@@ -354,6 +461,7 @@ class HandlerTests(unittest.TestCase):
         close_probe = lambda: {
             "source": "server_provider_runtime",
             "worker_lifecycle_id": "lifecycle-1",
+            "billed_lifecycle_ms": 9000,
             "attributed_idle_timeout_ms": 5000,
             "gpu_rate_per_second_usd": 0.001,
             "gpu_type_id": "NVIDIA A100 80GB PCIe",
@@ -367,9 +475,12 @@ class HandlerTests(unittest.TestCase):
         )
         self.assertEqual(record, records[0])
         self.assertEqual(record["record_type"], "lifecycle_close")
+        self.assertEqual(record["billed_lifecycle_ms"], 9000)
         self.assertEqual(record["attributed_idle_timeout_ms"], 5000)
         with self.assertRaisesRegex(ValueError, "attributed_idle_timeout_ms"):
             emit_lifecycle_close(lambda: {**close_probe(), "attributed_idle_timeout_ms": 0}, list().append)
+        with self.assertRaisesRegex(ValueError, "idle tail exceeds"):
+            emit_lifecycle_close(lambda: {**close_probe(), "billed_lifecycle_ms": 4000}, list().append)
 
     def test_job_telemetry_is_rejected_and_runtime_probe_is_required(self):
         with self.assertRaisesRegex(ValueError, "only input"):

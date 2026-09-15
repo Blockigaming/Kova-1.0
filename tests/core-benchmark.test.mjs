@@ -41,6 +41,7 @@ const close = (overrides = {}) => ({
   ...common,
   record_type: "lifecycle_close",
   close_event_id: "close-1",
+  billed_lifecycle_ms: 9000,
   attributed_idle_timeout_ms: 5000,
   ...overrides,
 });
@@ -57,12 +58,13 @@ const group = (result, route = "instant", config = configuration()) =>
 test("Core benchmark prices one complete RunPod lifecycle", () => {
   const result = summarizeCoreBenchmark([attempt(), close()]);
   const instant = group(result);
-  assert.equal(result.schema_version, 4);
+  assert.equal(result.schema_version, 5);
   assert.equal(result.worker_lifecycles, 1);
   assert.equal(instant.successful_requests, 1);
   assert.ok(Math.abs(instant.total_attributable_compute_cost_usd - 0.009) < 1e-12);
   assert.ok(Math.abs(instant.average_compute_cost_per_successful_request_usd - 0.009) < 1e-12);
   assert.ok(Math.abs(instant.startup_share_of_compute_percent - 2 / 9 * 100) < 1e-9);
+  assert.ok(Math.abs(instant.active_share_of_compute_percent - 2 / 9 * 100) < 1e-9);
   assert.ok(Math.abs(instant.idle_share_of_compute_percent - 5 / 9 * 100) < 1e-9);
 });
 
@@ -113,9 +115,10 @@ test("Core request succeeds only after every declared route stage succeeds", () 
     attempt({attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
     warmAttempt({attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", time_to_first_token_ms: null}),
     warmAttempt({attempt_id: "verification", route_id: "medium", stage_id: "verification-1", reasoning_effort: "medium"}),
-    close(),
+    close({billed_lifecycle_ms: 13000}),
   ]);
   assert.equal(group(result, "medium").successful_requests, 1);
+  assert.equal(group(result, "medium").average_request_time_to_first_token_ms, 6800);
 });
 
 test("Core benchmark rejects retries crossing a serving configuration or route", () => {
@@ -151,7 +154,7 @@ test("shared Core lifecycle can span routes and conserves allocated overhead", (
     warmAttempt({request_id: "request-2", attempt_id: "planning", route_id: "medium", stage_id: "planning-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
     warmAttempt({request_id: "request-2", attempt_id: "answer", route_id: "medium", stage_id: "answer-1", public_response: false, reasoning_effort: "medium", inference_ms: 1000, time_to_first_token_ms: null}),
     warmAttempt({request_id: "request-2", attempt_id: "verify", route_id: "medium", stage_id: "verification-1", reasoning_effort: "medium", inference_ms: 1000}),
-    close(),
+    close({billed_lifecycle_ms: 11000}),
   ]);
   assert.ok(Math.abs(group(result).total_attributable_compute_cost_usd - 0.0045) < 1e-12);
   assert.ok(Math.abs(group(result, "medium").total_attributable_compute_cost_usd - 0.0065) < 1e-12);
@@ -166,6 +169,9 @@ test("Core benchmark requires one measured cold start and idle tail per lifecycl
   assert.throws(() => summarizeCoreBenchmark([
     attempt(), close({attributed_idle_timeout_ms: 0}),
   ]), /lifecycle close missing measured idle tail/);
+  assert.throws(() => summarizeCoreBenchmark([
+    attempt(), close({billed_lifecycle_ms: 6000}),
+  ]), /startup and idle exceed billed wall time/);
   assert.throws(() => summarizeCoreBenchmark([attempt()]), /exactly one close event/);
   assert.throws(() => summarizeCoreBenchmark([attempt(), close(), close({close_event_id: "close-2"})]), /exactly one close event/);
 });
@@ -191,6 +197,30 @@ test("Core benchmark treats TTFT as public-stream-only and nullable before first
   ]);
   assert.equal(group(result).failed_attempts, 1);
   assert.equal(group(result).successful_requests, 0);
+});
+
+test("Core benchmark prices billed wall time instead of summed overlapping attempts", () => {
+  const result = summarizeCoreBenchmark([
+    attempt({inference_ms: 8000, time_to_first_token_ms: 1000}),
+    warmAttempt({request_id: "request-2", attempt_id: "attempt-2", inference_ms: 8000, time_to_first_token_ms: 1000}),
+    close({billed_lifecycle_ms: 9000}),
+  ]);
+  assert.equal(result.total_billed_lifecycle_ms, 9000);
+  assert.equal(result.total_observed_attempt_inference_ms, 16000);
+  assert.ok(Math.abs(result.total_attributable_compute_cost_usd - 0.009) < 1e-12);
+  assert.ok(Math.abs(result.lifecycle_allocations.reduce(
+    (total, item) => total + item.total_lifecycle_cost_usd, 0,
+  ) - result.total_attributable_compute_cost_usd) < 1e-12);
+});
+
+test("Core benchmark counts quarantined attempts without treating them as success", () => {
+  const result = summarizeCoreBenchmark([
+    attempt({outcome: "quarantined", time_to_first_token_ms: 500}), close(),
+  ]);
+  assert.equal(group(result).successful_requests, 0);
+  assert.equal(group(result).failed_attempts, 0);
+  assert.equal(group(result).quarantined_attempts, 1);
+  assert.equal(group(result).non_successful_attempts, 1);
 });
 
 test("Core lifecycle rejects mixed hardware even when model and route match", () => {
