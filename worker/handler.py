@@ -300,33 +300,44 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
     usage = None
     first_token_ns = None
     finish_reason = None
-    for raw_chunk in chunks:
-        chunk = _mapping(raw_chunk, "stream chunk must be an object")
-        if chunk.get("usage") is not None:
-            usage = _mapping(chunk["usage"], "stream usage must be an object")
-        choices = chunk.get("choices", [])
-        _require(isinstance(choices, list), "stream choices must be an array")
-        for raw_choice in choices:
-            _require(finish_reason is None, "stream returned a choice after its terminal finish reason")
-            choice = _mapping(raw_choice, "stream choice must be an object")
-            _require(choice.get("index", 0) == 0, "stream returned an unexpected choice index")
-            delta = _mapping(choice.get("delta"), "stream choice missing delta")
-            reason = choice.get("finish_reason")
-            _require(reason is None or isinstance(reason, str), "invalid stream finish_reason")
-            if reason is not None:
-                _require(finish_reason is None, "stream returned multiple finish reasons")
-                finish_reason = reason
-            _require(delta.get("reasoning_content") in (None, ""), "engine returned hidden reasoning")
-            content = delta.get("content")
-            _require(content is None or isinstance(content, str), "stream content must be text or null")
-            fragments = delta.get("tool_calls", [])
-            _require(isinstance(fragments, list), "stream tool_calls must be an array")
-            meaningful_tool_fragment = _append_stream_tool_calls(tool_call_states, fragments)
-            if first_token_ns is None and ((content and content.strip()) or meaningful_tool_fragment):
-                first_token_ns = clock_ns()
-                timing_state["time_to_first_token_ms"] = max(0, first_token_ns - started_ns) / 1_000_000
-            if content:
-                content_parts.append(content)
+    try:
+        for raw_chunk in chunks:
+            chunk = _mapping(raw_chunk, "stream chunk must be an object")
+            if chunk.get("usage") is not None:
+                usage = _mapping(chunk["usage"], "stream usage must be an object")
+            choices = chunk.get("choices", [])
+            _require(isinstance(choices, list), "stream choices must be an array")
+            for raw_choice in choices:
+                _require(finish_reason is None, "stream returned a choice after its terminal finish reason")
+                choice = _mapping(raw_choice, "stream choice must be an object")
+                _require(choice.get("index", 0) == 0, "stream returned an unexpected choice index")
+                delta = _mapping(choice.get("delta"), "stream choice missing delta")
+                reason = choice.get("finish_reason")
+                _require(reason is None or isinstance(reason, str), "invalid stream finish_reason")
+                if reason is not None:
+                    _require(finish_reason is None, "stream returned multiple finish reasons")
+                    finish_reason = reason
+                _require(delta.get("reasoning_content") in (None, ""), "engine returned hidden reasoning")
+                content = delta.get("content")
+                _require(content is None or isinstance(content, str), "stream content must be text or null")
+                fragments = delta.get("tool_calls", [])
+                _require(isinstance(fragments, list), "stream tool_calls must be an array")
+                meaningful_tool_fragment = _append_stream_tool_calls(tool_call_states, fragments)
+                if first_token_ns is None and ((content and content.strip()) or meaningful_tool_fragment):
+                    first_token_ns = clock_ns()
+                    timing_state["time_to_first_token_ms"] = max(0, first_token_ns - started_ns) / 1_000_000
+                if content:
+                    content_parts.append(content)
+    finally:
+        # The consumer can reject a chunk before exhausting the provider stream.
+        # Close explicitly rather than relying on generator garbage collection.
+        close = getattr(chunks, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception:
+                # Never mask the original rejection with transport cleanup details.
+                pass
 
     finished_ns = clock_ns()
     tool_calls = [tool_call_states[index] for index in sorted(tool_call_states)]
