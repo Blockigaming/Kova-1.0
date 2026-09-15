@@ -20,7 +20,7 @@ test("Azure Container Apps Consumption GPU is the blocked inference migration ta
   assert.equal(architecture.inference_migration_target.config_source, "config/azure-container-apps-gpu.v1.json");
   assert.equal(architecture.inference_migration_target.scale_to_zero_required, true);
   assert.equal(architecture.inference_migration_target.per_second_billing_required, true);
-  assert.equal(architecture.inference_migration_target.migration_status, "source_contract_only");
+  assert.equal(architecture.inference_migration_target.migration_status, "cpu_adapter_verified_live_transport_blocked");
   assert.equal(architecture.inference_migration_target.paid_execution_authorized, false);
   assert.equal(architecture.inference_migration_target.deployment_authorized, false);
   assert.equal(architecture.inference_migration_target.production_routing_authorized, false);

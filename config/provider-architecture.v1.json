@@ -38,7 +38,7 @@
     "per_second_billing_required": true,
     "gpu_profile_selection_status": "benchmark_and_quota_verification_required",
     "region_selection_status": "availability_and_quota_verification_required",
-    "migration_status": "source_contract_only",
+    "migration_status": "cpu_adapter_verified_live_transport_blocked",
     "paid_execution_authorized": false,
     "deployment_authorized": false,
     "production_routing_authorized": false

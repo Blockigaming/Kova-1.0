@@ -1,10 +1,17 @@
 # Kova 1.0
 
-Kova is the AI system developed for KovaGPT. The target architecture has two
-physical RunPod Serverless inference endpoints while preserving the existing
-Azure application plane: one benchmark-selected Kova Core endpoint for Auto
-through Max and non-Ultra Work, plus a separate scale-to-zero Kova Ultra endpoint.
-Cloudflare remains the DNS, CDN, WAF, and DDoS edge; it is not an inference host.
+Kova is the AI system developed for KovaGPT. **Microsoft Azure is the selected
+hosting direction** for Kova Core and Kova Ultra. Azure Container Apps Consumption
+GPU is the proposed scale-to-zero target; region, quota, hardware, container and
+model selections remain blocked. The existing RunPod source is legacy compatibility
+material, not the active hosting decision or a live deployment. Cloudflare remains
+the DNS, CDN, WAF and DDoS edge, not an inference host.
+
+The guarded [Azure provider boundary](docs/azure-provider-boundary.md) now has
+CPU-only HTTP/SSE fixtures, explicit execution gates, cancellation cleanup and
+integration coverage for every Core Chat/Work stage. No network/credential SDK is
+bound, and no model or Azure resource was started. The historical RunPod-specific
+sections below describe the retained source until a verified Azure cutover.
 
 Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are behavior and compute profiles, not claims of separately trained foundation weights. The active provider, upstream model, and license must be disclosed truthfully when asked. This repository contains public-safe source only: never commit credentials, private conversations, paid model outputs, private datasets, downloaded weights, adapters, or checkpoints.
 
@@ -20,7 +27,7 @@ Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are 
 - Paid training disabled
 - No trained Kova checkpoint exists yet
 - No KovaGPT production routing has changed
-- Progress is 22% under the product-complete definition; zero of 25 target routes are live
+- The recorded 22% estimate is historical and has not been recomputed for Azure; zero of 25 target routes are recorded live
 - Deterministic Kova Auto baseline implemented with Free-plan and Ultra-budget gates
 - Source-only RunPod Core multi-pass request planner and lifecycle-cost summarizer implemented
 - Source-only Ultra specialist, disagreement-check, judge, conditional-debate, and synthesis planner implemented

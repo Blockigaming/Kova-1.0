@@ -15,7 +15,10 @@
       "min_replicas": 0,
       "max_replicas": null,
       "gpu_profile_selected": null,
-      "gpu_candidates": ["Consumption-GPU-NC8as-T4", "Consumption-GPU-NC24-A100"],
+      "gpu_candidates": [
+        "Consumption-GPU-NC8as-T4",
+        "Consumption-GPU-NC24-A100"
+      ],
       "model_selected": false,
       "container_image_digest": null,
       "streaming_required": true,
@@ -29,7 +32,10 @@
       "min_replicas": 0,
       "max_replicas": null,
       "gpu_profile_selected": null,
-      "gpu_candidates": ["Consumption-GPU-NC8as-T4", "Consumption-GPU-NC24-A100"],
+      "gpu_candidates": [
+        "Consumption-GPU-NC8as-T4",
+        "Consumption-GPU-NC24-A100"
+      ],
       "model_selected": false,
       "container_image_digest": null,
       "streaming_required": true,
@@ -63,5 +69,37 @@
     "deployment_authorized": false,
     "endpoint_creation_authorized": false,
     "production_routing_authorized": false
+  },
+  "transport": {
+    "adapter": "worker/azure_container_apps.py",
+    "shared_protocol": "worker/openai_protocol.py",
+    "route": "/v1/chat/completions",
+    "request_shape": "direct_openai_compatible_json_no_queue_envelope",
+    "credential_source": "trusted_server_provider_only",
+    "injected_http_boundary_implemented": true,
+    "cpu_fixture_contract_verified": true,
+    "network_client_bound": false,
+    "live_transport_verified": false,
+    "client_transport_overrides_allowed": false,
+    "redirects_allowed": false,
+    "automatic_retries_allowed": false,
+    "tls_verification_required": true,
+    "close_on_completion_failure_and_cancellation": true,
+    "sdk_authentication_integration": null,
+    "configured_origin": null
+  },
+  "execution_timing": {
+    "documented_http_ingress_limit_seconds": 240,
+    "selected_http_hop_timeout_seconds": null,
+    "selected_total_model_work_budget_seconds": null,
+    "transport_io_timeout_required": true,
+    "streaming_bypasses_ingress_limit_claimed": false,
+    "long_work_transport_implemented": false,
+    "deadline_checks": "cooperative_plus_required_transport_io_timeout"
+  },
+  "source_urls": {
+    "azure_http_ingress": "https://learn.microsoft.com/en-us/azure/container-apps/ingress-overview",
+    "azure_authentication": "https://learn.microsoft.com/en-us/azure/container-apps/authentication",
+    "azure_gpu_profiles": "https://learn.microsoft.com/en-us/azure/container-apps/workload-profiles-overview"
   }
 }
