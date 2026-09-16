@@ -1,6 +1,7 @@
 """Fail-closed Kova Core benchmark worker. Importing it starts no paid work."""
 
 import json
+import math
 from pathlib import Path
 from time import perf_counter_ns
 from uuid import UUID, uuid4
@@ -18,6 +19,8 @@ MAX_MESSAGE_TEXT_CHARS = 250_000
 MAX_TOTAL_TEXT_CHARS = 750_000
 MAX_TOOL_CALLS = 32
 MAX_TOOL_ARGUMENT_CHARS = 250_000
+MAX_TOOL_JSON_DEPTH = 64
+MAX_TOOL_JSON_NODES = 50_000
 TRUSTED_SYSTEM_IDENTITY = json.loads(
     (ROOT / "config" / "identity.v1.json").read_text(encoding="utf-8")
 )["system_identity"]
@@ -167,7 +170,7 @@ def _validate_runtime_value(value, selected_candidate):
     for field in RUNTIME_NUMERIC_FIELDS:
         number = value.get(field)
         _require(isinstance(number, (int, float)) and not isinstance(number, bool), f"invalid {field}")
-        _require(number >= 0, f"invalid {field}")
+        _require(number >= 0 and (not isinstance(number, float) or math.isfinite(number)), f"invalid {field}")
     _require(value["gpu_rate_per_second_usd"] > 0, "invalid gpu_rate_per_second_usd")
     _require(isinstance(value["worker_lifecycle_id"], str) and value["worker_lifecycle_id"], "invalid worker_lifecycle_id")
     _require(isinstance(value["gpu_type_id"], str) and value["gpu_type_id"].strip(), "invalid gpu_type_id")
@@ -252,7 +255,8 @@ def _append_stream_tool_calls(states, fragments):
             "stream tool call has invalid fields",
         )
         index = fragment.get("index")
-        _require(isinstance(index, int) and not isinstance(index, bool) and index >= 0, "invalid stream tool call index")
+        _require(isinstance(index, int) and not isinstance(index, bool) and 0 <= index < MAX_TOOL_CALLS, "invalid stream tool call index")
+        _require(index in states or len(states) < MAX_TOOL_CALLS, "too many engine tool_calls")
         state = states.setdefault(index, {"id": "", "type": "", "function": {"name": "", "arguments": ""}})
         for field in ("id", "type"):
             part = fragment.get(field)
@@ -260,6 +264,7 @@ def _append_stream_tool_calls(states, fragments):
             if part:
                 contributed_visible_data = contributed_visible_data or bool(part.strip())
                 state[field] += part
+                _require(len(state[field]) <= (256 if field == "id" else 8), "stream tool identity too large")
         function = fragment.get("function")
         if function is not None:
             function = _mapping(function, "stream tool call function must be an object")
@@ -273,6 +278,8 @@ def _append_stream_tool_calls(states, fragments):
                 if part:
                     contributed_visible_data = contributed_visible_data or bool(part.strip())
                     state["function"][field] += part
+                    _require(len(state["function"][field]) <= (64 if field == "name" else MAX_TOOL_ARGUMENT_CHARS),
+                             "stream tool function too large")
     return contributed_visible_data
 
 
@@ -296,6 +303,7 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
         raise ValueError("streaming engine response must be an iterable of chunks") from error
 
     content_parts = []
+    content_chars = 0
     tool_call_states = {}
     usage = None
     first_token_ns = None
@@ -304,13 +312,15 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
         for raw_chunk in chunks:
             chunk = _mapping(raw_chunk, "stream chunk must be an object")
             if chunk.get("usage") is not None:
+                _require(usage is None, "stream returned duplicate usage evidence")
                 usage = _mapping(chunk["usage"], "stream usage must be an object")
             choices = chunk.get("choices", [])
-            _require(isinstance(choices, list), "stream choices must be an array")
+            _require(isinstance(choices, list) and len(choices) <= 1, "stream must return at most one choice")
             for raw_choice in choices:
                 _require(finish_reason is None, "stream returned a choice after its terminal finish reason")
                 choice = _mapping(raw_choice, "stream choice must be an object")
-                _require(choice.get("index", 0) == 0, "stream returned an unexpected choice index")
+                _require(type(choice.get("index", 0)) is int and choice.get("index", 0) == 0,
+                         "stream returned an unexpected choice index")
                 delta = _mapping(choice.get("delta"), "stream choice missing delta")
                 reason = choice.get("finish_reason")
                 _require(reason is None or isinstance(reason, str), "invalid stream finish_reason")
@@ -327,6 +337,8 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
                     first_token_ns = clock_ns()
                     timing_state["time_to_first_token_ms"] = max(0, first_token_ns - started_ns) / 1_000_000
                 if content:
+                    content_chars += len(content)
+                    _require(content_chars <= MAX_TOTAL_TEXT_CHARS, "stream content too large")
                     content_parts.append(content)
     finally:
         # The consumer can reject a chunk before exhausting the provider stream.
@@ -351,15 +363,56 @@ def consume_engine_response(response, *, expect_stream, clock_ns, started_ns, ti
     return normalized, finished_ns
 
 
+def _unique_tool_object(pairs):
+    result = {}
+    for key, value in pairs:
+        _require(key not in result, "duplicate tool argument key")
+        result[key] = value
+    return result
+
+
+def _finite_tool_float(raw):
+    value = float(raw)
+    _require(math.isfinite(value), "nonfinite tool argument")
+    return value
+
+
+def _reject_tool_constant(_value):
+    raise ValueError("nonfinite tool argument")
+
+
+def _validate_tool_structure(value):
+    # Iterative validation avoids interpreter-dependent recursion limits.
+    pending = [(value, 0)]
+    visited = 0
+    while pending:
+        current, depth = pending.pop()
+        visited += 1
+        _require(depth <= MAX_TOOL_JSON_DEPTH and visited <= MAX_TOOL_JSON_NODES,
+                 "tool argument structure too large")
+        if isinstance(current, dict):
+            pending.extend((item, depth + 1) for pair in current.items() for item in pair)
+        elif isinstance(current, list):
+            pending.extend((item, depth + 1) for item in current)
+        elif isinstance(current, str):
+            try:
+                current.encode("utf-8")
+            except UnicodeEncodeError:
+                raise ValueError("tool argument is not valid UTF-8") from None
+
+
 def _sanitized_tool_calls(value):
     _require(isinstance(value, list), "engine tool_calls must be an array")
     _require(len(value) <= MAX_TOOL_CALLS, "too many engine tool_calls")
     cleaned = []
+    seen_ids = set()
     for raw_call in value:
         call = _mapping(raw_call, "engine tool call must be an object")
         _require(set(call) == {"id", "type", "function"}, "engine tool call has invalid fields")
         call_id = call["id"]
         _require(isinstance(call_id, str) and 1 <= len(call_id) <= 256, "invalid engine tool call id")
+        _require(call_id not in seen_ids, "duplicate engine tool call id")
+        seen_ids.add(call_id)
         _require(call["type"] == "function", "unsupported engine tool call type")
         function = _mapping(call["function"], "engine tool call function must be an object")
         _require(set(function) == {"name", "arguments"}, "engine tool function has invalid fields")
@@ -375,10 +428,12 @@ def _sanitized_tool_calls(value):
             "invalid engine tool function arguments",
         )
         try:
-            decoded_arguments = json.loads(arguments)
-        except json.JSONDecodeError as error:
-            raise ValueError("engine tool function arguments must be valid JSON") from error
+            decoded_arguments = json.loads(arguments, object_pairs_hook=_unique_tool_object,
+                                           parse_constant=_reject_tool_constant, parse_float=_finite_tool_float)
+        except (ValueError, RecursionError):
+            raise ValueError("engine tool function arguments must be valid JSON with finite values and unique keys") from None
         _require(isinstance(decoded_arguments, dict), "engine tool function arguments must be a JSON object")
+        _validate_tool_structure(decoded_arguments)
         cleaned.append({
             "id": call_id,
             "type": "function",
@@ -390,9 +445,11 @@ def _sanitized_tool_calls(value):
 def sanitize_engine_response(request_id, response):
     _require(isinstance(response, dict), "engine response must be an object")
     choices = response.get("choices")
-    _require(isinstance(choices, list) and choices, "engine response missing choices")
+    _require(isinstance(choices, list) and len(choices) == 1, "engine response must contain exactly one choice")
     first = choices[0]
     _require(isinstance(first, dict), "engine choice must be an object")
+    _require(type(first.get("index", 0)) is int and first.get("index", 0) == 0,
+             "engine returned an unexpected choice index")
     message = first.get("message")
     _require(isinstance(message, dict), "engine response missing message")
     finish_reason = first.get("finish_reason")
@@ -400,6 +457,7 @@ def sanitize_engine_response(request_id, response):
     content = message.get("content")
     tool_calls = _sanitized_tool_calls(message.get("tool_calls", []))
     _require(content is None or isinstance(content, str), "engine response content must be text or null")
+    _require(content is None or len(content) <= MAX_TOTAL_TEXT_CHARS, "engine response content too large")
     has_content = bool(content and content.strip())
     _require(has_content or bool(tool_calls), "engine response must contain non-whitespace content or tool_calls")
     _require(finish_reason != "tool_calls" or bool(tool_calls), "tool-call finish_reason missing tool_calls")
@@ -481,9 +539,11 @@ def emit_lifecycle_close(
     }
     validated = _validate_runtime_value(identity_probe, selected_candidate)
     idle_ms = value["attributed_idle_timeout_ms"]
-    _require(isinstance(idle_ms, (int, float)) and not isinstance(idle_ms, bool) and idle_ms > 0, "invalid attributed_idle_timeout_ms")
+    _require(isinstance(idle_ms, (int, float)) and not isinstance(idle_ms, bool) and idle_ms > 0
+             and (not isinstance(idle_ms, float) or math.isfinite(idle_ms)), "invalid attributed_idle_timeout_ms")
     billed_ms = value["billed_lifecycle_ms"]
-    _require(isinstance(billed_ms, (int, float)) and not isinstance(billed_ms, bool) and billed_ms > 0, "invalid billed_lifecycle_ms")
+    _require(isinstance(billed_ms, (int, float)) and not isinstance(billed_ms, bool) and billed_ms > 0
+             and (not isinstance(billed_ms, float) or math.isfinite(billed_ms)), "invalid billed_lifecycle_ms")
     _require(idle_ms <= billed_ms, "idle tail exceeds billed lifecycle")
     close_event_id = close_event_id_factory()
     _require(isinstance(close_event_id, str) and close_event_id, "invalid close_event_id")
