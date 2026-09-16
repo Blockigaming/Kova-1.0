@@ -1,5 +1,6 @@
 """Create bounded Ultra plans; this module never launches agents or paid compute."""
 
+from copy import deepcopy
 import json
 import math
 import re
@@ -7,6 +8,7 @@ from pathlib import Path
 
 from router.policy import resolve_route
 from ultra.binding import DISAGREEMENT_INSTRUCTION, JUDGE_INSTRUCTION
+from ultra.conversation import validated_conversation
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,11 +77,14 @@ def _validate_admission(admission):
 
 def _resolve_request(request):
     _require(isinstance(request, dict), "Ultra request must be an object")
+    content_fields = set(request) & {"task", "messages"}
+    _require(len(content_fields) == 1, "Ultra requires exactly one task or conversation")
     if "route_id" in request:
-        _require(set(request) == {"request_id", "task", "route_id"}, "Ultra request contains unsupported fields")
+        _require(set(request) == {"request_id", "route_id"} | content_fields,
+                 "Ultra request contains unsupported fields")
         policy = resolve_route({"surface": "chat", "route_id": request["route_id"]})
     else:
-        expected = {"request_id", "task", "surface", "family", "effort"}
+        expected = {"request_id", "surface", "family", "effort"} | content_fields
         _require(set(request) == expected and request.get("surface") == "work", "Ultra request contains unsupported fields")
         policy = resolve_route({"surface": "work", "family": request["family"], "effort": request["effort"]})
     _require(policy["engine"] == "kova-ultra", "route is not eligible for Kova Ultra")
@@ -111,14 +116,15 @@ def _select_specialists(domains, maximum):
     return specialists
 
 
-def _messages_template(task, behavior_instruction, operation_instruction, artifact_ids, optional_artifact_ids=()):
+def _messages_template(task, behavior_instruction, operation_instruction, artifact_ids,
+                       optional_artifact_ids=(), *, conversation=None):
     optional = set(optional_artifact_ids)
     bindings = []
     messages = [
         {"role": "system", "content": IDENTITY},
         {"role": "system", "content": behavior_instruction},
         {"role": "system", "content": operation_instruction},
-        {"role": "user", "content": task},
+        *(deepcopy(conversation) if conversation is not None else [{"role": "user", "content": task}]),
     ]
     for stage_id in artifact_ids:
         target_message_index = len(messages)
@@ -149,11 +155,12 @@ def _trusted_count(token_counter, messages):
 
 
 def build_ultra_plan(request, *, admission, token_counter):
-    """Return a bounded DAG description without executing any operation."""
+    """Build a single-task or full-text-conversation DAG without executing it."""
     policy = _resolve_request(request)
     request_id = request["request_id"]
-    task = request["task"]
     _require(isinstance(request_id, str) and 1 <= len(request_id) <= 128, "invalid request_id")
+    conversation = validated_conversation(request["messages"]) if "messages" in request else None
+    task = conversation[-1]["content"] if conversation is not None else request["task"]
     _require(isinstance(task, str) and task.strip(), "task must be nonempty text")
     _require(len(task) <= 250_000, "task too large")
     _validate_admission(admission)
@@ -206,7 +213,7 @@ def build_ultra_plan(request, *, admission, token_counter):
     for spec in specs:
         messages, bindings = _messages_template(
             task, policy["behavior_instruction"], spec["instruction"], spec["artifact_ids"],
-            spec.get("optional_artifact_ids", ()),
+            spec.get("optional_artifact_ids", ()), conversation=conversation,
         )
         spec["messages"] = messages
         spec["artifact_bindings"] = bindings
@@ -251,7 +258,7 @@ def build_ultra_plan(request, *, admission, token_counter):
         for operation in operations
     )
     _require(reserved_total <= admission["max_total_tokens"], "Ultra token reservation exceeds admission cap")
-    return {
+    plan = {
         "request_id": request_id,
         "route_id": policy["route_id"],
         "display_name": policy["display_name"],
@@ -272,3 +279,8 @@ def build_ultra_plan(request, *, admission, token_counter):
         "token_accounting": "worst_case_including_inputs_propagated_artifacts_and_conditional_debate",
         "operations": operations,
     }
+    # Do not reinterpret old task-only saved jobs. New history is part of the
+    # canonical execution snapshot and participates in restart drift checks.
+    if conversation is not None:
+        plan["conversation_messages"] = deepcopy(conversation)
+    return plan

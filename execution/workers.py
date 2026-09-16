@@ -39,8 +39,12 @@ def _verify_current_plan(plan, identity, token_counter):
             candidate_model=identity["model"], token_counter=token_counter,
         )
     else:
+        # New snapshots reconstruct from the full history, never only the latest
+        # task. Old task-only snapshots keep their exact original schema.
+        content = ({"messages": plan["conversation_messages"]} if "conversation_messages" in plan
+                   else {"task": plan["task"]})
         rebuilt = build_ultra_plan(
-            {"request_id": plan["request_id"], "task": plan["task"], **selection},
+            {"request_id": plan["request_id"], **content, **selection},
             admission={
                 "entitlement": "pro", "ultra_authorized": True,
                 "remaining_usd": plan["estimated_max_usd"],
