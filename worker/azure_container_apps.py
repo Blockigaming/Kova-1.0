@@ -21,6 +21,7 @@ from worker.openai_protocol import (
     decode_response,
     validate_chat_request,
 )
+from worker.response_privacy import require_private_reasoning_absent
 
 
 # A per-HTTP-hop ceiling, NOT a Kova mode's approved active-work budget.
@@ -125,6 +126,9 @@ def prepare_request(engine_request, settings):
     request = validate_chat_request(engine_request)
     _require(not (set(request) - _ALLOWED_FIELDS), "unsupported Azure request fields")
     _require(request["model"] == settings.served_model, "server-selected model mismatch")
+    # Suppress wire reasoning, not model thinking. The selected serving image must
+    # support this contract before live_transport_verified may be asserted.
+    request["include_reasoning"] = False
     try:
         body = json.dumps(
             request, ensure_ascii=False, allow_nan=False, separators=(",", ":"),
@@ -321,6 +325,7 @@ def make_azure_inference_client(
                         "model" not in value or value["model"] == settings.served_model,
                         "Azure response model mismatch",
                     )
+                    require_private_reasoning_absent(value)
                     yield value
                 check()
             finally:

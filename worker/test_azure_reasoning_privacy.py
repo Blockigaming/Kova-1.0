@@ -1,8 +1,4 @@
-"""CPU-only regression tests for Azure reasoning-output suppression.
-
-No provider, credential service, model, GPU, or external network is contacted.
-The initial test-only commit is a negative control against the published adapter.
-"""
+"""CPU-only Azure reasoning-output suppression regressions; no model calls."""
 
 from copy import deepcopy
 from dataclasses import replace
@@ -42,7 +38,7 @@ def response(stream=False):
     }
 
 
-def run_response(value, *, stream=False):
+def fixture(value, *, stream=False):
     closed = []
     def transport(plan, _headers):
         wire = json.dumps(value)
@@ -51,10 +47,21 @@ def run_response(value, *, stream=False):
         return AzureResponse(200, "text/event-stream" if stream else "application/json",
                              plan.url, wire.encode(), lambda: closed.append(True))
     client = make_azure_inference_client(SETTINGS, transport, lambda: "synthetic.fixture.token")
-    return client(request(stream)), closed
+    return client, closed
 
 
 class AzureReasoningPrivacyTests(unittest.TestCase):
+    def assert_rejected(self, value, stream, message=None):
+        client, closed = fixture(value, stream=stream)
+        with self.assertRaises(OpenAIProtocolError) as caught:
+            result = client(request(stream))
+            if stream:
+                list(result)
+        if message:
+            self.assertIn(message, str(caught.exception))
+        self.assertNotIn(PRIVATE, str(caught.exception))
+        self.assertEqual(closed, [True])
+
     def test_requests_suppress_reasoning_without_disabling_thinking(self):
         for stream in (False, True):
             for thinking in (False, True):
@@ -77,41 +84,39 @@ class AzureReasoningPrivacyTests(unittest.TestCase):
         for field in ("reasoning", "reasoning_content"):
             value = response()
             value["choices"][0]["message"][field] = PRIVATE
-            closed = []
-            def transport(plan, _headers):
-                return AzureResponse(200, "application/json", plan.url,
-                                     json.dumps(value).encode(), lambda: closed.append(True))
-            with self.subTest(field=field), self.assertRaisesRegex(OpenAIProtocolError, "hidden reasoning") as caught:
-                make_azure_inference_client(SETTINGS, transport, lambda: "fixture.token")(request())
-            self.assertNotIn(PRIVATE, str(caught.exception))
-            self.assertEqual(closed, [True])
+            with self.subTest(field=field):
+                self.assert_rejected(value, False, "hidden reasoning")
 
     def test_both_reasoning_field_names_are_rejected_before_stream_yield(self):
         for field in ("reasoning", "reasoning_content"):
             value = response(True)
             value["choices"][0]["delta"][field] = PRIVATE
-            stream, closed = run_response(value, stream=True)
-            with self.subTest(field=field), self.assertRaisesRegex(OpenAIProtocolError, "hidden reasoning") as caught:
-                next(stream)
-            self.assertNotIn(PRIVATE, str(caught.exception))
-            self.assertEqual(closed, [True])
+            client, closed = fixture(value, stream=True)
+            stream = client(request(True))
+            with self.subTest(field=field):
+                try:
+                    with self.assertRaisesRegex(OpenAIProtocolError, "hidden reasoning") as caught:
+                        next(stream)
+                    self.assertNotIn(PRIVATE, str(caught.exception))
+                    self.assertEqual(closed, [True])
+                finally:
+                    stream.close()
 
     def test_nonstring_reasoning_values_do_not_pass_as_empty(self):
         for field in ("reasoning", "reasoning_content"):
             for bad in (False, 0, [], {}):
                 value = response(True)
                 value["choices"][0]["delta"][field] = bad
-                stream, closed = run_response(value, stream=True)
-                with self.subTest(field=field, bad=bad), self.assertRaises(OpenAIProtocolError):
-                    list(stream)
-                self.assertEqual(closed, [True])
+                with self.subTest(field=field, bad=bad):
+                    self.assert_rejected(value, True)
 
     def test_empty_reasoning_and_numeric_usage_remain_valid(self):
         for stream in (False, True):
             value = response(stream)
             part = value["choices"][0]["delta" if stream else "message"]
             part.update(reasoning=None, reasoning_content="")
-            result, closed = run_response(value, stream=stream)
+            client, closed = fixture(value, stream=stream)
+            result = client(request(stream))
             if stream:
                 result = list(result)[0]
             self.assertEqual(result, value)
@@ -127,26 +132,15 @@ class AzureReasoningPrivacyTests(unittest.TestCase):
                     if location == "message":
                         target = target["delta" if stream else "message"]
                     target[field] = [PRIVATE]
-                    closed = []
-                    def transport(plan, _headers):
-                        wire = json.dumps(value)
-                        if stream:
-                            wire = "data: " + wire + "\n\ndata: [DONE]\n\n"
-                        return AzureResponse(200, "text/event-stream" if stream else "application/json",
-                                             plan.url, wire.encode(), lambda: closed.append(True))
-                    client = make_azure_inference_client(SETTINGS, transport, lambda: "fixture.token")
-                    with self.subTest(stream=stream, field=field, location=location), self.assertRaises(OpenAIProtocolError) as caught:
-                        result = client(request(stream))
-                        if stream:
-                            list(result)
-                    self.assertNotIn(PRIVATE, str(caught.exception))
-                    self.assertEqual(closed, [True])
+                    with self.subTest(stream=stream, field=field, location=location):
+                        self.assert_rejected(value, stream, "private token metadata")
 
     def test_null_logprob_metadata_is_compatible(self):
         for stream in (False, True):
             value = response(stream)
             value["choices"][0]["logprobs"] = None
-            result, closed = run_response(value, stream=stream)
+            client, closed = fixture(value, stream=stream)
+            result = client(request(stream))
             self.assertEqual(list(result)[0] if stream else result, value)
             self.assertEqual(closed, [True])
 
@@ -158,8 +152,8 @@ class AzureReasoningPrivacyTests(unittest.TestCase):
             "function": {"name": "search", "arguments": '{"reasoning":"a search term"}'},
         }]
         value["choices"][0]["finish_reason"] = "tool_calls"
-        result, closed = run_response(value)
-        self.assertEqual(result, value)
+        client, closed = fixture(value)
+        self.assertEqual(client(request()), value)
         self.assertEqual(closed, [True])
 
     def test_late_private_chunk_fails_and_releases_response(self):
@@ -173,10 +167,13 @@ class AzureReasoningPrivacyTests(unittest.TestCase):
             return AzureResponse(200, "text/event-stream", plan.url,
                                  (wire + "data: [DONE]\n\n").encode(), lambda: closed.append(True))
         stream = make_azure_inference_client(SETTINGS, transport, lambda: "fixture.token")(request(True))
-        self.assertEqual(next(stream), first)
-        with self.assertRaisesRegex(OpenAIProtocolError, "hidden reasoning"):
-            next(stream)
-        self.assertEqual(closed, [True])
+        try:
+            self.assertEqual(next(stream), first)
+            with self.assertRaisesRegex(OpenAIProtocolError, "hidden reasoning"):
+                next(stream)
+            self.assertEqual(closed, [True])
+        finally:
+            stream.close()
 
     def test_default_execution_guards_still_block_before_callbacks(self):
         for field in ("paid_execution_authorized", "private_auth_verified", "live_transport_verified"):
