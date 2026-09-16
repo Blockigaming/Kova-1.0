@@ -10,7 +10,10 @@ the DNS, CDN, WAF and DDoS edge, not an inference host.
 The guarded [Azure provider boundary](docs/azure-provider-boundary.md) now has
 CPU-only HTTP/SSE fixtures, explicit execution gates, cancellation cleanup and
 integration coverage for every Core Chat/Work stage. No network/credential SDK is
-bound, and no model or Azure resource was started. The historical RunPod-specific
+bound to production, and no model or Azure resource was started. The concrete
+[HTTP and managed-identity REST client](docs/azure-http-runtime.md) is implemented
+and loopback-tested behind disabled-by-default controls. No live endpoint,
+address, audience, identity or timeout is selected. The historical RunPod-specific
 sections below describe the retained source until a verified Azure cutover.
 
 Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are behavior and compute profiles, not claims of separately trained foundation weights. The active provider, upstream model, and license must be disclosed truthfully when asked. This repository contains public-safe source only: never commit credentials, private conversations, paid model outputs, private datasets, downloaded weights, adapters, or checkpoints.
