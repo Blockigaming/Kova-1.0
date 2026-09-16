@@ -51,6 +51,13 @@ stage claims and ordered events. Separate connections cannot claim a stage twice
 or exceed the configured parallel width. Each runner owns a token and increasing
 epoch; stale completions cannot overwrite a new supervisor decision.
 
+Before every model-stage dispatch, the worker rebuilds the pure Core/Ultra plan
+under the current server policy and trusted tokenizer and compares the complete
+canonical snapshot. A changed instruction, dependency, identity, or token budget
+fails before client construction rather than mixing old completed artifacts with
+new policy. An existing job is not silently upgraded. Both runner clocks are
+validated before taking ownership; invalid clock data cannot strand a queued job.
+
 A clean pause happens only between complete stages. Reopening the journal and
 resuming reuses completed artifacts without repeating provider calls or adding a
 fresh deadline. Repeating the same owner/idempotency key with changed request,

@@ -5,6 +5,7 @@ import tempfile
 from threading import Barrier, Event, Lock, Thread
 from time import monotonic, sleep, time_ns
 import unittest
+from unittest.mock import patch
 
 from execution.activity import activity_from_started_event
 from execution.contracts import ExecutionBlocked, ExecutionError, ExecutionSpec, canonical
@@ -299,6 +300,72 @@ class RunnerTests(unittest.TestCase):
                 LocalRunner(self.store, lambda: grant, fixture.worker(), clock=clock).run(job)
         self.assertEqual(fixture.calls, [])
         self.assertIsNotNone(self.store.begin(grant, job))
+
+
+    def test_changed_core_planning_contract_is_rejected_before_any_provider_call(self):
+        from core import adapter
+        spec = make_spec("high")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "stale-core-plan", spec)
+        fixture = ModelFixture()
+        with patch.dict(adapter.STAGE_INSTRUCTIONS, {"planning": "Changed source planning instructions"}):
+            status = LocalRunner(self.store, lambda: grant, fixture.worker()).run(job)
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(fixture.calls, [])
+
+    def test_invalid_wall_clock_never_acquires_a_runner_fence(self):
+        spec = make_spec()
+        grant = grant_for(spec)
+        job = self.store.create(grant, "wall-clock-invalid", spec)
+        fixture = ModelFixture()
+        for clock in (lambda: None, lambda: float("nan"), lambda: True, lambda: "time"):
+            with self.subTest(clock=clock), self.assertRaises(ExecutionError):
+                LocalRunner(self.store, lambda: grant, fixture.worker(), clock_ms=clock).run(job)
+            self.assertEqual(self.store.status(OWNER, job)["state"], "queued")
+        self.assertEqual(fixture.calls, [])
+        self.assertIsNotNone(self.store.begin(grant, job))
+
+    def test_changed_ultra_planning_contract_is_rejected_before_client_construction(self):
+        from ultra import orchestrator
+        spec = make_spec("ultra")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "stale-ultra-plan", spec)
+        fixture = ModelFixture()
+        with patch.dict(orchestrator.ROLE_INSTRUCTIONS, {"judge": "Changed judge instruction"}), \
+                patch.object(fixture, "client_factory", side_effect=AssertionError("client constructed")) as factory:
+            status = LocalRunner(self.store, lambda: grant, fixture.worker()).run(job)
+            factory.assert_not_called()
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(fixture.calls, [])
+
+    def test_resume_with_changed_core_policy_preserves_completed_artifacts_without_new_calls(self):
+        from core import adapter
+        spec, fixture, job, runner, status = self.run_job(make_spec("max"), max_stages=2)
+        self.assertEqual(status["state"], "paused")
+        before = list(fixture.calls)
+        with patch.dict(adapter.STAGE_INSTRUCTIONS, {"answer": "Changed answer instruction"}):
+            status = runner.run(job)
+        self.assertEqual(status["state"], "failed")
+        self.assertEqual(status["completed_stages"], 2)
+        self.assertEqual(fixture.calls, before)
+        with self.assertRaises(ExecutionError):
+            self.store.result(OWNER, job)
+
+    def test_wall_clock_corruption_after_start_releases_runner_and_withholds_result(self):
+        wall = [time_ns() // 1_000_000]
+        spec = make_spec("instant")
+        grant = grant_for(spec)
+        job = self.store.create(grant, "wall-clock-changes", spec)
+        def worker(spec, stage, artifacts, control, logical_id, attempt):
+            wall[0] = None
+            control.check()
+            raise AssertionError("invalid wall clock was accepted")
+        status = LocalRunner(self.store, lambda: grant, worker, clock_ms=lambda: wall[0]).run(job)
+        self.assertEqual(status["state"], "failed")
+        row = self.store._db.execute("SELECT runner FROM jobs WHERE id=?", (job,)).fetchone()
+        self.assertIsNone(row["runner"])
+        with self.assertRaises(ExecutionError):
+            self.store.result(OWNER, job)
 
 
 if __name__ == "__main__":

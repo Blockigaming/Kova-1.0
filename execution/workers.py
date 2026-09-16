@@ -7,12 +7,51 @@ Neither tools nor arbitrary model-supplied commands are executed by this module.
 
 from time import perf_counter_ns
 
-from execution.contracts import ExecutionError, ExecutionIntegrityError, require
+from core.adapter import build_core_plan
+from execution.contracts import ExecutionError, ExecutionIntegrityError, canonical, require
+from ultra.orchestrator import build_ultra_plan
 from ultra.binding import bind_ultra_operation, judge_requires_debate, validate_disagreements
 from worker.handler import (
     CORE_SERVING, PINNED_CORE_CANDIDATES, RUNTIME_IDENTITY_FIELDS, consume_engine_response,
     handle_job, sanitize_engine_response, validate_runtime_probe,
 )
+
+
+def _verify_current_plan(plan, identity, token_counter):
+    """Reject stale snapshots before constructing a provider client.
+
+    Core's handler rebuilds operations from current source. A restarted job must
+    not silently mix completed old-policy artifacts with newly generated policy.
+    Reconstructing admission for the pure Ultra planner starts no execution and
+    does not replace the runner's independently checked current server grant.
+    """
+    route = plan["route_id"]
+    selection = {"route_id": route}
+    if route.startswith("work:"):
+        _, family, effort = route.split(":")
+        selection = {"surface": "work", "family": family,
+                     "effort": effort.replace("-", " ").title()}
+    if plan["engine"] == "kova-core":
+        rebuilt = build_core_plan(
+            {"request_id": plan["request_id"],
+             "messages": plan["operations"][0]["request_template"]["messages"][3:],
+             **selection},
+            candidate_model=identity["model"], token_counter=token_counter,
+        )
+    else:
+        rebuilt = build_ultra_plan(
+            {"request_id": plan["request_id"], "task": plan["task"], **selection},
+            admission={
+                "entitlement": "pro", "ultra_authorized": True,
+                "remaining_usd": plan["estimated_max_usd"],
+                "estimated_max_usd": plan["estimated_max_usd"],
+                "max_agents": sum(op["id"].startswith("specialist-") for op in plan["operations"]),
+                "max_total_tokens": plan["maximum_total_tokens"],
+            },
+            token_counter=lambda messages: token_counter(identity["model"], messages),
+        )
+    if canonical(plan) != canonical(rebuilt):
+        raise ExecutionIntegrityError("saved execution plan differs from the current planning contract")
 
 
 class ModelStageWorker:
@@ -45,6 +84,7 @@ class ModelStageWorker:
         candidate = candidates[0]
         serving = next(c for c in CORE_SERVING["candidates"] if c["id"] == candidate["id"])
         require(identity["context_tokens"] <= serving["context_tokens"], "served context exceeds candidate context")
+        _verify_current_plan(plan, identity, self.token_counter)
         client = self.client_factory(control, dict(identity))
         require(callable(client), "guarded inference client required")
         control.check()

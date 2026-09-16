@@ -15,7 +15,7 @@ from time import monotonic
 
 from execution.contracts import (
     ExecutionBlocked, ExecutionCancelled, ExecutionError, ExecutionExpired,
-    ExecutionGrant, ExecutionIntegrityError, require,
+    ExecutionGrant, ExecutionIntegrityError, positive_integer, require,
 )
 from execution.store import TERMINAL, now_ms
 from worker.azure_container_apps import AzureCancelled, AzureDeadlineExceeded
@@ -68,6 +68,12 @@ class LocalRunner:
             return initial
         started_clock = self.clock()
         require(type(started_clock) in (int, float) and math.isfinite(started_clock), "invalid execution clock")
+        started_wall_ms = self.clock_ms()
+        positive_integer(started_wall_ms, "execution wall clock")
+        # Validate both clocks before taking ownership; bad clock data must not
+        # leave a queued job fenced to a runner that never entered its cleanup.
+        deadline = started_clock + max(0, (spec.limits.deadline_unix_ms - started_wall_ms) / 1000)
+        require(math.isfinite(deadline), "invalid execution deadline")
         lease = self.store.begin(grant, job_id)
         if lease is None:
             return self.store.status(owner, job_id)
@@ -76,7 +82,6 @@ class LocalRunner:
         started_count = 0
         final_state = "failed"
         # Job expiry is not renewed by a new process or a resumed scheduler call.
-        deadline = started_clock + max(0, (spec.limits.deadline_unix_ms - self.clock_ms()) / 1000)
 
         def global_check():
             if stopped.is_set():
@@ -89,7 +94,9 @@ class LocalRunner:
             now = self.clock()
             require(type(now) in (int, float) and math.isfinite(now) and now >= started_clock,
                     "invalid execution clock")
-            if now >= deadline or self.clock_ms() >= spec.limits.deadline_unix_ms:
+            wall_ms = self.clock_ms()
+            positive_integer(wall_ms, "execution wall clock")
+            if now >= deadline or wall_ms >= spec.limits.deadline_unix_ms:
                 raise ExecutionExpired("original execution deadline exceeded")
             return now
 
