@@ -17,7 +17,10 @@ canonical HTTPS Azure origins, rejects caller transport overrides, pins the
 request model to trusted settings, rejects redirects and unexpected response
 content types, enforces byte/JSON limits, redacts credential/error details, and
 closes responses on completion, rejection, cooperative timeout or cancellation.
-There are no automatic retries and no HTTP or credential SDK is bound.
+There are no automatic retries and no HTTP or credential SDK is bound to
+production. The concrete, standard-library HTTP and managed-identity REST
+implementation is now documented in [Azure HTTP runtime](azure-http-runtime.md);
+its external configuration and execution remain disabled.
 
 The factory requires all three server-owned execution/authentication/transport
 flags before invoking the credential provider or transport. All real repository
@@ -59,8 +62,8 @@ platform timeout.
 Cooperative checks around reads cannot interrupt a blocking transport by
 themselves. A future HTTP implementation must enforce connect/read deadlines,
 abort on close/cancel, verify TLS, avoid redirects, avoid automatic retries and
-redact headers/bodies. That implementation and its live verification are still
-blocked. Longer workflows need separately verified bounded orchestration and
+redact headers/bodies. The concrete implementation now has loopback-only tests; its live verification
+and production binding are still blocked. Longer workflows need separately verified bounded orchestration and
 reconnection/cancellation semantics; this PR does not implement a job system.
 
 A valid Azure hostname is not proof of private routing or authentication. Verify
@@ -89,7 +92,8 @@ when direct source downloads are unavailable.
 
 ## Remaining gates
 
-Bind and test a real server-owned HTTP/auth client only under separate approval;
+Verify the implemented HTTP/auth client's Azure destination, audience, caller
+roles and real network behavior only under separate live-use approval;
 validate immutable container/weights and Azure quota/region/hardware; benchmark
 cold/warm full-route quality, timing, cancellation and attributable cost; implement
 long-running work and actual Ultra execution; resolve application entitlements and

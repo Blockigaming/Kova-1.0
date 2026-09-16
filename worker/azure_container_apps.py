@@ -185,6 +185,8 @@ def _raw_fragments(body, check):
                 fragment = next(iterator)
             except StopIteration:
                 break
+            except (AzureCancelled, AzureDeadlineExceeded, AzureExecutionBlocked):
+                raise
             except Exception:
                 raise AzureProtocolError("Azure response read failed") from None
             check()
@@ -256,6 +258,8 @@ def make_azure_inference_client(
             check()
             try:
                 token = credential_provider()
+            except (AzureCancelled, AzureDeadlineExceeded, AzureExecutionBlocked):
+                raise
             except Exception:
                 raise AzureProtocolError("Azure credential acquisition failed") from None
             check()
@@ -277,6 +281,8 @@ def make_azure_inference_client(
             )
             try:
                 response = transport(bounded_request, headers)
+            except (AzureCancelled, AzureDeadlineExceeded, AzureExecutionBlocked):
+                raise
             except Exception:
                 raise AzureProtocolError("Azure transport failed") from None
             if type(response) is not AzureResponse:
