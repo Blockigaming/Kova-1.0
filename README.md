@@ -16,6 +16,13 @@ and loopback-tested behind disabled-by-default controls. No live endpoint,
 address, audience, identity or timeout is selected. The historical RunPod-specific
 sections below describe the retained source until a verified Azure cutover.
 
+The [source-only execution kernel](docs/execution-kernel.md) now runs Core stages
+and concurrent Ultra specialist/decision/synthesis workflows over injected clients.
+Its local reference journal supports safe-frontier restart, owner-scoped replay,
+atomic stage claims, retained unknown-attempt reservations and cancellation. It is
+not a production durable store or deployed background service. All model timing,
+GPU capacity and quality claims still require separately authorized evidence.
+
 Kova is not a foundation model trained from scratch. Cosmo, Orion, and Nova are behavior and compute profiles, not claims of separately trained foundation weights. The active provider, upstream model, and license must be disclosed truthfully when asked. This repository contains public-safe source only: never commit credentials, private conversations, paid model outputs, private datasets, downloaded weights, adapters, or checkpoints.
 
 ## Current state
@@ -136,7 +143,8 @@ inference backend after user-reported inconsistent interactive latency. That rep
 is recorded as a product decision, not reproducible benchmark telemetry. Cloudflare
 continues to serve only the edge roles.
 
-Both inference engines target RunPod Serverless. Kova Core has two source-verified,
+The historical RunPod source below is retained for compatibility, not the current
+Azure hosting decision. Kova Core has two source-verified,
 hardware-unbenchmarked candidates representing the same Qwen3.8-27B model family:
 the original BF16 checkpoint and the official fine-grained FP8 checkpoint. Model,
 quantization, GPU, serving engine, endpoint type, and container digest all remain
