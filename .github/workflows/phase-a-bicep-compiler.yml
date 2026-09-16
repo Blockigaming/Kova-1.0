@@ -1,0 +1,38 @@
+name: Phase A compiler dependency only
+
+on:
+  push:
+    branches: [diag/phase-a-bicep-compiler-20260916]
+
+permissions:
+  contents: read
+
+jobs:
+  compiler:
+    if: github.repository == 'Blockigaming/Kova-1.0' && github.ref == 'refs/heads/diag/phase-a-bicep-compiler-20260916'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Download and verify the public Bicep compiler only
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bicep-compiler"
+          cd "$RUNNER_TEMP/bicep-compiler"
+          curl --fail --location --silent --show-error --max-time 90 \
+            https://github.com/Azure/bicep/releases/download/v0.47.16/bicep-linux-x64 \
+            --output bicep-linux-x64
+          printf '%s  %s\n' \
+            64c345a58e0c3e48b1bc98a4e62d6b3adb1d238281297de3400aeafb2697aa5a \
+            bicep-linux-x64 > SHA256SUMS
+          sha256sum --check SHA256SUMS
+          chmod 755 bicep-linux-x64
+          ./bicep-linux-x64 --version > VERSION.txt
+          tar -czf bicep-compiler-v0.47.16.tar.gz bicep-linux-x64 SHA256SUMS VERSION.txt
+          rm bicep-linux-x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: phase-a-bicep-compiler
+          path: ${{ runner.temp }}/bicep-compiler/
+          if-no-files-found: error
+          retention-days: 1
