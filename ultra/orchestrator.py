@@ -1,10 +1,12 @@
 """Create bounded Ultra plans; this module never launches agents or paid compute."""
 
 import json
+import math
 import re
 from pathlib import Path
 
 from router.policy import resolve_route
+from ultra.binding import DISAGREEMENT_INSTRUCTION, JUDGE_INSTRUCTION
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,8 +29,8 @@ DOMAIN_TERMS = {
 }
 ROLE_INSTRUCTIONS = {
     "specialist": "Work privately as the assigned specialist. Ground conclusions and do not expose hidden chain-of-thought.",
-    "disagreement": "Compare specialist conclusions and record only concrete agreements, conflicts, and missing evidence.",
-    "judge": "Judge evidence quality and choose between conflicts recorded by the disagreement check.",
+    "disagreement": "Compare specialist conclusions and record only concrete agreements, conflicts, and missing evidence." + DISAGREEMENT_INSTRUCTION,
+    "judge": "Judge evidence quality and choose between conflicts recorded by the disagreement check." + JUDGE_INSTRUCTION,
     "debate": "Challenge only material disagreements confirmed by the judge. This is the single allowed debate round.",
     "synthesis": "Produce the final Kova answer from verified artifacts. Do not expose private reasoning or invent tool results.",
 }
@@ -61,7 +63,8 @@ def _validate_admission(admission):
     _require(admission["ultra_authorized"] is True, "Ultra execution is not authorized")
     for field in ("remaining_usd", "estimated_max_usd"):
         value = admission[field]
-        _require(isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0, f"invalid {field}")
+        _require(isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0
+                 and (not isinstance(value, float) or math.isfinite(value)), f"invalid {field}")
     _require(admission["estimated_max_usd"] > 0, "invalid estimated_max_usd")
     _require(admission["remaining_usd"] >= admission["estimated_max_usd"], "Ultra request budget exceeded")
     _require(isinstance(admission["max_agents"], int) and not isinstance(admission["max_agents"], bool), "invalid max_agents")
