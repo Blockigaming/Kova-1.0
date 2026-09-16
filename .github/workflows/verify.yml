@@ -17,6 +17,20 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Install hash-pinned receiver verification dependencies in isolation
+        env:
+          PIP_CONFIG_FILE: /dev/null
+          PIP_EXTRA_INDEX_URL: ""
+        run: |
+          set -eu
+          test "$(uname -m)" = x86_64
+          python3.12 -m venv "$RUNNER_TEMP/kova-receiver-auth"
+          "$RUNNER_TEMP/kova-receiver-auth/bin/python" -m pip install \
+            --index-url https://pypi.org/simple --disable-pip-version-check \
+            --require-hashes --only-binary=:all: \
+            -r requirements/receiver-auth-py312-linux.lock
+          "$RUNNER_TEMP/kova-receiver-auth/bin/python" -m pip check
+          echo "$RUNNER_TEMP/kova-receiver-auth/bin" >> "$GITHUB_PATH"
       - run: npm test
       - run: npm run preflight
       - name: Archive verified committed source
