@@ -9,6 +9,7 @@ import json
 import re
 
 from execution.contracts import ExecutionError, require
+from ultra.conversation import validated_conversation
 
 
 DISAGREEMENT_INSTRUCTION = (
@@ -84,7 +85,7 @@ def judge_requires_debate(content, detector_content, specialist_ids):
 
 
 def bind_ultra_operation(plan, stage_id, artifacts, *, runtime_identity, token_counter):
-    """Bind exact dependency targets and recount the final prompt before inference."""
+    """Bind exact dependency targets and recount the complete conversation."""
     require(isinstance(plan, dict) and plan.get("engine") == "kova-ultra", "Ultra plan required")
     matches = [op for op in plan["operations"] if op["id"] == stage_id]
     require(len(matches) == 1, "Ultra stage must exist exactly once")
@@ -95,13 +96,22 @@ def bind_ultra_operation(plan, stage_id, artifacts, *, runtime_identity, token_c
     messages = template["messages"]
     bindings = template["artifact_bindings"]
     require(len(bindings) == len(artifacts), "Ultra artifact binding count mismatch")
+    conversation = validated_conversation(plan["conversation_messages"]) if "conversation_messages" in plan else [
+        {"role": "user", "content": plan["task"]},
+    ]
+    first_artifact = 3 + len(conversation)
+    require(isinstance(messages, list) and len(messages) == first_artifact + len(bindings)
+            and messages[3:first_artifact] == conversation,
+            "Ultra conversation differs from its saved snapshot")
     sources, targets = set(), set()
     total_chars = 0
-    for binding in bindings:
+    for offset, binding in enumerate(bindings):
         source = binding["source_stage_id"]
         index = binding["target_message_index"]
-        require(source in artifacts and source not in sources, "duplicate or undeclared artifact source")
-        require(type(index) is int and 4 <= index < len(messages) and index not in targets,
+        require(source in artifacts and source not in sources
+                and source == operation["depends_on"][offset], "duplicate or undeclared artifact source")
+        require(type(index) is int and index == first_artifact + offset
+                and index < len(messages) and index not in targets,
                 "invalid Ultra artifact target")
         require(binding["target_field"] == "content" and binding["replace_exact_target_only"] is True,
                 "Ultra binding must target exact message content")
