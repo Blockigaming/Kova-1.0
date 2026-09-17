@@ -8,7 +8,7 @@ already admitted encrypted jobs and never stores model prompts or credentials.
 from dataclasses import dataclass
 from uuid import uuid4
 
-from execution.contracts import ExecutionError, ExecutionGrant, identifier, positive_integer, require
+from execution.contracts import ExecutionError, ExecutionGrant, identifier, positive_integer
 from execution.postgres_admission import AccountPostgresStore
 from execution.postgres_store import _schema
 from execution.runner import LocalRunner
@@ -50,27 +50,28 @@ class DispatchClaim:
 
 
 class _DispatchStore:
-    """Bind the kernel's independently generated runner fence to its queue claim."""
+    """Bind the kernel's independent runner fence without shadowing store methods."""
     def __init__(self, queue, claim):
-        self.queue, self.claim = queue, claim
+        self._queue, self._dispatch_claim = queue, claim
 
     def __getattr__(self, name):
-        return getattr(self.queue.store, name)
+        return getattr(self._queue.store, name)
 
     def begin(self, grant, job_id):
-        need(job_id == self.claim.job_id and grant.owner_id == self.claim.owner_id)
-        with self.queue.store._transaction():
-            self.queue._check_claim(self.claim)
-            fence = self.queue.store.begin(grant, job_id)
+        claim = self._dispatch_claim
+        need(job_id == claim.job_id and grant.owner_id == claim.owner_id)
+        with self._queue.store._transaction():
+            self._queue._check_claim(claim)
+            fence = self._queue.store.begin(grant, job_id)
             if fence is not None:
-                self.queue._sql("UPDATE {} SET runner_token=%s,runner_epoch=%s WHERE job=%s",
-                                (*fence, job_id))
+                self._queue._sql("UPDATE {} SET runner_token=%s,runner_epoch=%s WHERE job=%s",
+                                 (*fence, job_id))
             return fence
 
     def control_state(self, owner, job_id, runner, epoch):
-        with self.queue.store._transaction():
-            self.queue._check_claim(self.claim)
-            return self.queue.store.control_state(owner, job_id, runner, epoch)
+        with self._queue.store._transaction():
+            self._queue._check_claim(self._dispatch_claim)
+            return self._queue.store.control_state(owner, job_id, runner, epoch)
 
 
 class PostgresSupervisor:
@@ -206,8 +207,6 @@ class PostgresSupervisor:
             raise DispatchRejected("worker stop verification unavailable") from None
         need(stopped is True)
         with self.store._transaction():
-            # Do not require the dead worker still be authorized; instead verify
-            # its exact persisted claim generation/token before fencing it out.
             row = self._sql("SELECT * FROM {} WHERE job=%s AND owner=%s", (claim.job_id, claim.owner_id)).fetchone()
             need(row is not None and row["state"] == "claimed"
                  and (row["claim_token"], row["worker_instance"], row["generation"]) ==
