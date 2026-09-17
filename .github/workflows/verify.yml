@@ -19,3 +19,21 @@ jobs:
           cache: npm
       - run: npm test
       - run: npm run preflight
+      - name: Archive verified committed source
+        if: github.event_name == 'push'
+        run: |
+          git archive --format=tar --output="$RUNNER_TEMP/model-source.tar" HEAD
+          git rev-parse HEAD > "$RUNNER_TEMP/SOURCE_COMMIT.txt"
+          cd "$RUNNER_TEMP"
+          sha256sum model-source.tar > model-source.sha256
+      - name: Retain exact-head source for offline verification
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-source-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/model-source.tar
+            ${{ runner.temp }}/SOURCE_COMMIT.txt
+            ${{ runner.temp }}/model-source.sha256
+          if-no-files-found: error
+          retention-days: 1
