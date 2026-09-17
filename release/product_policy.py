@@ -1,8 +1,9 @@
 """Validate the owner-approved A36/A37 source policy without enabling production.
 
-This validator proves that the approved source decisions match the routing and
-admission contracts. It performs no authentication, network, model, cloud, tool,
-or deployment action and does not imply Phase B readiness.
+This validator checks approved policy values against routing/admission constants.
+It does not verify application-to-job execution, persistence, browser integration
+or independent review. Policy resolution is not checklist closure. It performs no
+authentication, network, model, cloud, tool or deployment action.
 """
 
 import json
@@ -105,7 +106,12 @@ def validate_checked_in():
         "completed_answer_fixed_target": False,
         "global_active_execution_duration": False,
         "finite_server_job_budget_required": True,
-        "closed_checklist_ids": ["A36", "A37"],
+        # Approval resolves product decisions. Checklist credit also needs the
+        # integrated implementation and its evidence, which this CLI does not run.
+        "resolved_product_decision_ids": ["A36", "A37"],
+        "closed_checklist_ids": [],
+        "execution_integration_verified": False,
+        "independent_review_verified": False,
         "phase_a_total": 40,
         "product_policy_ready": True,
         "phase_b_ready": False,
@@ -118,6 +124,8 @@ def main(args=None):
         need(args in ([], ["--require-ready"]))
         report = validate_checked_in()
         print(json.dumps(report, sort_keys=True))
+        # --require-ready refers only to approved policy values, not execution
+        # integration or the fixed forty-item Phase A completion rubric.
         return 0
     except (ProductPolicyError, RuntimeError, OSError, ValueError, TypeError, KeyError):
         print("approved product policy rejected", file=sys.stderr)
