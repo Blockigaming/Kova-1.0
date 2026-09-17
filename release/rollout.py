@@ -277,6 +277,8 @@ class RehearsalJournal:
                 # A prior asynchronous write must be settled before a rollback
                 # supersedes it; an observed weight alone is not that evidence.
                 need(observation["settled_intent_id"] == state["pending"]["id"])
+                requested_at = integer(state["pending"].get("requested_at_ms"), 1)
+                need(observation["observed_at_ms"] >= requested_at)
             # A bad candidate never needs to pass quality gates to leave traffic.
             # Partial application is recorded, not misrepresented as atomic.
             return self._intent(plan, state, "rollback", 0, observation, now_ms)
