@@ -32,6 +32,17 @@ jobs:
             -r requirements/postgres-store-py312.lock
           "$RUNNER_TEMP/kova-receiver-auth/bin/python" -m pip check
           echo "$RUNNER_TEMP/kova-receiver-auth/bin" >> "$GITHUB_PATH"
+      - name: Fetch verified Microsoft compiler for offline template checks only
+        run: |
+          set -eu
+          compiler="$RUNNER_TEMP/kova-bicep"
+          curl --fail --location --silent --show-error --max-time 60 \
+            https://github.com/Azure/bicep/releases/download/v0.47.16/bicep-linux-x64 \
+            --output "$compiler"
+          echo "64c345a58e0c3e48b1bc98a4e62d6b3adb1d238281297de3400aeafb2697aa5a  $compiler" | sha256sum -c -
+          chmod 700 "$compiler"
+          "$compiler" --version
+          echo "KOVA_BICEP=$compiler" >> "$GITHUB_ENV"
       - run: npm test
       - run: npm run preflight
       - name: Archive verified committed source
