@@ -76,6 +76,8 @@ def resolve_application_selection(value, *, grant, prompt=None, auto_budget=None
         mode = value["mode_id"]
         require(isinstance(mode, str), "invalid Chat mode")
         if mode == FREE_THINKING_MODE_ID:
+            if grant.tier != "free":
+                raise ExecutionBlocked("Thinking is the Free application alias")
             route_id = FREE_THINKING_ROUTE
             by_auto, features = False, ()
         elif mode in AUTO_ALIASES:
