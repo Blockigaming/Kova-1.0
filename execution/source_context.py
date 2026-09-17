@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 
-from execution.contracts import ExecutionError, ExecutionGrant, ExecutionSpec, canonical, identifier, require
+from execution.contracts import ExecutionError, ExecutionGrant, ExecutionSpec, canonical, identifier
 from execution.workers import ModelStageWorker
 from ultra.conversation import validated_conversation
 
@@ -32,6 +32,13 @@ class ContextRejected(ExecutionError):
 def _need(condition):
     if not condition:
         raise ContextRejected("source context rejected")
+
+
+def _history(value):
+    try:
+        return validated_conversation(value)
+    except ValueError:
+        raise ContextRejected("source conversation rejected") from None
 
 
 def _text(value, maximum, *, nonempty=True):
@@ -187,7 +194,7 @@ class SourceContext:
 
     def prepare(self, scope, history, refs=()):
         self.check(scope, refs)
-        original = validated_conversation(history)
+        original = _history(history)
         _need(len({(ref.kind, ref.source_id) for ref in refs}) == len(refs))
         records, tool_calls, receipts = [], set(), set()
         for ref in refs:
@@ -209,7 +216,7 @@ class SourceContext:
             evidence = canonical({"sources": records})
             _need(len(evidence) <= MAX_BUNDLE_BYTES)
             messages = [*original[:-1], {"role": "assistant", "content": REFERENCE_PREFIX + evidence.decode()}, original[-1]]
-            messages = validated_conversation(messages)
+            messages = _history(messages)
         return PreparedContext(scope, refs, canonical(original), canonical(messages))
 
     def restore(self, scope, history, refs, *, expected_fingerprint):
