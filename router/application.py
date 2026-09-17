@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from execution.contracts import ExecutionBlocked, ExecutionError, ExecutionGrant, require
 from router.auto import classify_auto
+from router.entitlements import FREE_THINKING_MODE_ID, FREE_THINKING_ROUTE
 from router.policy import CHAT_POLICIES, WORK_EFFORTS, WORK_FAMILIES, resolve_route
 
 
@@ -54,10 +55,11 @@ class ResolvedSelection:
 def resolve_application_selection(value, *, grant, prompt=None, auto_budget=None, auto_enabled=False):
     """Resolve a new versioned selection under current explicit server permissions.
 
-    Missing version and Free Thinking are never silently converted. Auto is a
-    router, and its output must pass both the tier cap and exact route allowlist.
-    An allowed route does NOT enable execution, GPU capacity or production routing.
-    The existing execution and Azure runtime guards still apply independently.
+    Free Thinking is the approved Free application alias for medium/Orion; direct
+    Free `medium` remains disallowed. Auto is a router, and its output must pass
+    both the tier cap and exact route allowlist. An allowed route does NOT enable
+    execution, GPU capacity or production routing. Existing execution and Azure
+    runtime guards still apply independently.
     """
     require(type(grant) is ExecutionGrant, "current authenticated server grant required")
     if not grant.execution_authorized:
@@ -73,9 +75,12 @@ def resolve_application_selection(value, *, grant, prompt=None, auto_budget=None
         require(set(value) == {"schema_version", "surface", "mode_id"}, "unsupported selection fields")
         mode = value["mode_id"]
         require(isinstance(mode, str), "invalid Chat mode")
-        if mode == "thinking":
-            raise LegacySelectionRequired("Free Thinking has no approved custom-model mapping")
-        if mode in AUTO_ALIASES:
+        if mode == FREE_THINKING_MODE_ID:
+            if grant.tier != "free":
+                raise ExecutionBlocked("Thinking is the Free application alias")
+            route_id = FREE_THINKING_ROUTE
+            by_auto, features = False, ()
+        elif mode in AUTO_ALIASES:
             if not auto_enabled:
                 raise ExecutionBlocked("Auto is not enabled by the server for this request")
             route = classify_auto(prompt, entitlement=grant.tier, budget=auto_budget)
@@ -86,8 +91,12 @@ def resolve_application_selection(value, *, grant, prompt=None, auto_budget=None
             route_id = "extra-high" if mode in EXTRA_HIGH_ALIASES else mode
             require(route_id in CHAT_POLICIES, "invalid Chat mode")
             by_auto, features = False, ()
-        grant.authorize(grant.owner_id, route_id)
-        application_id = "extra_high" if route_id == "extra-high" else route_id
+        grant.authorize(grant.owner_id, route_id,
+                        application_mode_id=mode if not by_auto else None)
+        if mode == FREE_THINKING_MODE_ID:
+            application_id = FREE_THINKING_MODE_ID
+        else:
+            application_id = "extra_high" if route_id == "extra-high" else route_id
         return ResolvedSelection(route_id, "chat", application_id, by_auto, features)
     require(set(value) == {"schema_version", "surface", "family", "effort"}, "unsupported selection fields")
     family, raw_effort = value["family"], value["effort"]

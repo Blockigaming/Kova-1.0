@@ -11,6 +11,7 @@ import json
 import math
 import re
 
+from router.entitlements import FREE_THINKING_MODE_ID, FREE_THINKING_ROUTE, WORK_ALLOWED_BY_TIER
 from router.policy import CHAT_POLICIES, WORK_FAMILIES, WORK_EFFORTS
 
 
@@ -72,8 +73,10 @@ ALL_ROUTES = frozenset(CHAT_POLICIES) | frozenset(
     f"work:{family}:{effort.lower().replace(' ', '-')}"
     for family in WORK_FAMILIES for effort in WORK_EFFORTS
 )
+# Direct Chat route entitlement. Free Thinking is a separately authorized app-mode
+# alias to medium/Orion; it intentionally does not make direct Free `medium` valid.
 CHAT_ALLOWED = {
-    "free": frozenset(("instant",)),  # Legacy Free Thinking is deliberately unmapped.
+    "free": frozenset(("instant",)),
     "plus": frozenset(("instant", "medium", "high")),
     "pro": frozenset(CHAT_POLICIES),
 }
@@ -83,8 +86,9 @@ CHAT_ALLOWED = {
 class ExecutionGrant:
     """Current authenticated owner/entitlement, supplied only by trusted server code.
 
-    Work route authorization must be explicit because the full Work plan matrix
-    has not been recovered. Nothing here grants a route merely because it exists.
+    Plan policy is an upper bound; the exact route must also be present in the
+    server-built allowed_routes set. Free Thinking is the only approved alias that
+    may authorize a route above the direct Free Chat set.
     """
 
     owner_id: str
@@ -99,13 +103,23 @@ class ExecutionGrant:
                 and self.allowed_routes <= ALL_ROUTES, "invalid allowed routes")
         require(type(self.execution_authorized) is bool, "invalid execution grant")
 
-    def authorize(self, owner_id, route_id):
+    def authorize(self, owner_id, route_id, *, application_mode_id=None):
         if not self.execution_authorized or owner_id != self.owner_id:
             raise ExecutionBlocked("execution is not authorized for this owner")
+        if application_mode_id is not None and not isinstance(application_mode_id, str):
+            raise ExecutionBlocked("invalid application mode authorization")
         if route_id not in self.allowed_routes:
             raise ExecutionBlocked("route is not in the current server entitlement")
-        if route_id in CHAT_POLICIES and route_id not in CHAT_ALLOWED[self.tier]:
-            raise ExecutionBlocked("route exceeds the current Chat plan")
+        if route_id in CHAT_POLICIES:
+            free_thinking_alias = (
+                self.tier == "free"
+                and application_mode_id == FREE_THINKING_MODE_ID
+                and route_id == FREE_THINKING_ROUTE
+            )
+            if route_id not in CHAT_ALLOWED[self.tier] and not free_thinking_alias:
+                raise ExecutionBlocked("route exceeds the current Chat plan")
+        elif route_id.startswith("work:") and route_id not in WORK_ALLOWED_BY_TIER[self.tier]:
+            raise ExecutionBlocked("route exceeds the current Work plan")
         if (route_id == "ultra" or route_id.endswith(":ultra")) and self.tier != "pro":
             raise ExecutionBlocked("Ultra requires current Pro entitlement")
 

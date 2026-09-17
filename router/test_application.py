@@ -1,5 +1,4 @@
 from copy import deepcopy
-from dataclasses import replace
 import json
 from pathlib import Path
 import subprocess
@@ -68,9 +67,18 @@ class ApplicationBridgeTests(unittest.TestCase):
             with self.assertRaises(LegacySelectionRequired):
                 self.resolve({"surface": "chat", "mode_id": alias}, prompt=prompt, auto_budget=BUDGET, auto_enabled=True)
 
-    def test_free_thinking_and_legacy_ids_are_never_silently_upgraded(self):
-        for tier in ("free", "plus", "pro"):
-            with self.assertRaises(LegacySelectionRequired):
+    def test_free_thinking_maps_to_orion_only_as_the_free_alias(self):
+        resolved = self.resolve(selection("thinking"), grant=grant("free"))
+        self.assertEqual(resolved.route_id, "medium")
+        self.assertEqual(resolved.application_mode_id, "thinking")
+        self.assertEqual(resolved.policy()["display_name"], "Kova 5.6 Orion")
+        self.assertFalse(resolved.selected_by_auto)
+        with self.assertRaises(ExecutionBlocked):
+            self.resolve(selection("medium"), grant=grant("free"))
+        with self.assertRaises(ExecutionBlocked):
+            self.resolve(selection("thinking"), grant=grant("free", routes={"instant"}))
+        for tier in ("plus", "pro"):
+            with self.subTest(tier=tier), self.assertRaises(ExecutionBlocked):
                 self.resolve(selection("thinking"), grant=grant(tier))
         for mode in ("creative", "precise", "code", "study", "default", "pro", "research", "kova_5_5", "UNKNOWN"):
             with self.subTest(mode=mode), self.assertRaises(ExecutionError):
@@ -82,6 +90,7 @@ class ApplicationBridgeTests(unittest.TestCase):
         app = json.loads(subprocess.check_output(command, cwd=ROOT, text=True, timeout=5))
         contract = json.loads((ROOT / "config/application-bridge.v1.json").read_text())
         self.assertEqual(app, contract["application_chat_modes"])
+        self.assertEqual(self.resolve(selection("thinking"), grant=grant("free")).route_id, "medium")
         for tier, modes in app.items():
             for route in CHAT_POLICIES:
                 app_id = "extra_high" if route == "extra-high" else route
@@ -121,14 +130,21 @@ class ApplicationBridgeTests(unittest.TestCase):
             with self.assertRaises(ExecutionError):
                 self.resolve(selection("auto"), auto_enabled=flag)
 
-    def test_work_entitlements_are_explicit_and_ultra_remains_pro_only(self):
-        value = {"schema_version": SELECTION_SCHEMA, "surface": "work", "family": "nova", "effort": "High"}
-        with self.assertRaises(ExecutionBlocked):
-            self.resolve(value, grant=grant(routes={"instant"}))
-        self.assertEqual(self.resolve(value, grant=grant(routes={"work:nova:high"})).route_id, "work:nova:high")
-        for tier in ("free", "plus"):
-            with self.assertRaises(ExecutionBlocked):
-                self.resolve({**value, "effort": "Ultra"}, grant=grant(tier))
+    def test_complete_work_entitlement_matrix_is_plan_bounded_and_exact_route_bounded(self):
+        for tier in ("free", "plus", "pro"):
+            for family in sorted(WORK_FAMILIES):
+                for effort in WORK_EFFORTS:
+                    value = {"schema_version": SELECTION_SCHEMA, "surface": "work", "family": family, "effort": effort}
+                    route = f"work:{family}:{effort.lower().replace(' ', '-')}"
+                    expected = tier == "pro" or (tier == "plus" and effort in ("Light", "Medium", "High"))
+                    with self.subTest(tier=tier, route=route):
+                        if expected:
+                            self.assertEqual(self.resolve(value, grant=grant(tier)).route_id, route)
+                            with self.assertRaises(ExecutionBlocked):
+                                self.resolve(value, grant=grant(tier, routes={"instant"}))
+                        else:
+                            with self.assertRaises(ExecutionBlocked):
+                                self.resolve(value, grant=grant(tier))
 
     def test_disabled_grant_and_untrusted_grant_types_fail_before_selection(self):
         with self.assertRaises(ExecutionBlocked):
