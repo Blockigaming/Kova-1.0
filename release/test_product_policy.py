@@ -12,9 +12,10 @@ from router.entitlements import ALL_WORK_ROUTES, PLUS_WORK_ROUTES, WORK_ALLOWED_
 
 
 class ProductPolicyTests(unittest.TestCase):
-    def test_checked_in_policy_closes_only_a36_a37_and_not_phase_b(self):
+    def test_checked_in_policy_resolves_a36_a37_decisions_without_closing_deliverables(self):
         report = product_policy.validate_checked_in()
-        self.assertEqual(report["closed_checklist_ids"], ["A36", "A37"])
+        self.assertEqual(report["resolved_product_decision_ids"], ["A36", "A37"])
+        self.assertEqual(report["closed_checklist_ids"], [])
         self.assertEqual(report["phase_a_total"], 40)
         self.assertEqual(report["work_routes_by_tier"], {"free": 0, "plus": 9, "pro": 18})
         self.assertTrue(report["product_policy_ready"])
@@ -66,7 +67,7 @@ class ProductPolicyTests(unittest.TestCase):
         with patch.object(product_policy, "PRODUCT_POLICY", mutated), self.assertRaises(product_policy.ProductPolicyError):
             product_policy.validate_checked_in()
 
-    def test_cli_ready_means_a36_a37_only_and_never_phase_b(self):
+    def test_cli_ready_means_approved_policy_only_and_never_phase_b(self):
         root = Path(__file__).resolve().parents[1]
         for args in ([], ["--require-ready"]):
             result = subprocess.run([sys.executable, "-m", "release.product_policy", *args],
