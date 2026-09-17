@@ -160,7 +160,19 @@ class ServingRuntime:
                     "model_revision": self._identity["model_revision"], "tokenizer_revision": self._identity["model_revision"],
                     "served_model_names": [self._identity["model"]],
                     "context_tokens": self.policy.context_tokens, "trust_remote_code": False}
+        need(type(observed) is dict and set(observed) == set(expected))
+        need(all(type(observed[key]) is type(value) for key, value in expected.items()))
         need(observed == expected)
+
+    def _owns(self, instance, backend, states):
+        """Awaited work may only affect the exact lifecycle that started it.
+
+        This controller is owned by one event-loop thread. Synchronous stop may
+        run between awaits; replacement engines must not inherit old health or
+        be closed by an old task's timeout/cancellation/failure.
+        """
+        return (self._instance == instance and self._backend is backend
+                and self._state in states)
 
     def _close_failed(self):
         self._state = "failed"
@@ -179,6 +191,7 @@ class ServingRuntime:
         self._permission()  # Before artifact access, native import or model workers.
         self._state = "verifying"
         self._instance = str(uuid4())  # Every new load has a distinct lifecycle fence.
+        instance, backend = self._instance, None
         try:
             started = self._clock()
             need(type(started) in (float, int) and math.isfinite(started))
@@ -205,17 +218,21 @@ class ServingRuntime:
                 "serving_engine": "vllm", "serving_version": SUPPORTED_VLLM_VERSION,
                 "worker_lifecycle_id": self._instance}
             self._state = "loading"
-            self._backend = NativeVllm(root, artifact, self.policy)
+            backend = NativeVllm(root, artifact, self.policy)
+            self._backend = backend
             self._verify_observed()
             now = self._clock()
             need(type(now) in (int, float) and math.isfinite(now) and 0 <= now-started < self.policy.load_timeout_seconds)
-            await asyncio.wait_for(self._backend.health(), self.policy.health_timeout_seconds)
+            await asyncio.wait_for(backend.health(), self.policy.health_timeout_seconds)
+            need(self._owns(instance, backend, ("loading",)))
             self._permission()
             self._verify_observed()
+            need(self._owns(instance, backend, ("loading",)))
             self._state = "ready"
             return self.status()
         except BaseException as error:
-            self._close_failed()
+            if self._owns(instance, backend, ("verifying", "loading")):
+                self._close_failed()
             if not isinstance(error, Exception):
                 raise
             raise ServingRuntimeError("model runtime startup failed") from None
@@ -227,15 +244,19 @@ class ServingRuntime:
         is returned. The private artifact path is omitted from the handoff.
         """
         need(self._state == "ready")
+        instance, backend = self._instance, self._backend
         try:
             self._permission()
             self._verify_observed()
-            await asyncio.wait_for(self._backend.health(), self.policy.health_timeout_seconds)
+            await asyncio.wait_for(backend.health(), self.policy.health_timeout_seconds)
+            need(self._owns(instance, backend, ("ready",)))
             self._permission()
             self._verify_observed()
+            need(self._owns(instance, backend, ("ready",)))
             return {key: value for key, value in self._identity.items() if key != "artifact_root"}
         except BaseException as error:
-            self._close_failed()
+            if self._owns(instance, backend, ("ready",)):
+                self._close_failed()
             if not isinstance(error, Exception):
                 raise
             raise ServingRuntimeError("model runtime health or identity failed") from None
@@ -247,9 +268,11 @@ class ServingRuntime:
         and request cancellation must still surround every actual generation call.
         This does not create an unprotected OpenAI-compatible public endpoint.
         """
-        need(expected_lifecycle_id == self._instance)
+        need(type(expected_lifecycle_id) is str and expected_lifecycle_id == self._instance)
+        backend = self._backend
         await self.identity()
-        return self._backend.engine
+        need(self._owns(expected_lifecycle_id, backend, ("ready",)))
+        return backend.engine
 
     def stop(self):
         if self._backend is None:
