@@ -1,16 +1,15 @@
 from dataclasses import replace
-import json
 import unittest
 
 from execution.contracts import (
-    ExecutionBlocked, ExecutionError, ExecutionGrant, ExecutionLimits, ExecutionSpec, canonical,
+    ALL_ROUTES, ExecutionBlocked, ExecutionError, ExecutionGrant, ExecutionLimits,
+    ExecutionSpec, canonical,
 )
 from execution.test_support import IDENTITY, grant_for, make_plan, make_spec
 
 
 class ExecutionContractTests(unittest.TestCase):
     def test_all_24_explicit_routes_keep_names_and_original_budgets(self):
-        from execution.contracts import ALL_ROUTES
         self.assertEqual(len(ALL_ROUTES), 24)
         for route in sorted(ALL_ROUTES):
             with self.subTest(route=route):
@@ -76,25 +75,42 @@ class ExecutionContractTests(unittest.TestCase):
             with self.assertRaises(ExecutionError):
                 ExecutionSpec(canonical(value))
 
-    def test_chat_plan_caps_cannot_be_widened_by_allowed_route_list(self):
+    def test_direct_chat_plan_caps_cannot_be_widened_by_allowed_route_list(self):
         for tier, denied in (("free", ["medium", "high", "ultra"]), ("plus", ["extra-high", "max", "ultra"])):
             for route in denied:
                 spec = make_spec(route)
                 with self.subTest(tier=tier, route=route), self.assertRaises(ExecutionBlocked):
                     grant_for(spec, tier=tier).authorize("fixture-owner", route)
 
-    def test_work_permissions_and_ultra_pro_are_explicit(self):
-        spec = make_spec("work:nova:high")
-        grant = grant_for(spec)
-        grant.authorize(grant.owner_id, spec.plan["route_id"])
+    def test_free_thinking_alias_is_narrow_and_still_needs_exact_route_grant(self):
+        grant = ExecutionGrant("fixture-owner", "free", frozenset(("medium",)), True)
+        grant.authorize("fixture-owner", "medium", application_mode_id="thinking")
+        for app_mode in (None, "medium", "instant", "THINKING"):
+            with self.subTest(app_mode=app_mode), self.assertRaises(ExecutionBlocked):
+                grant.authorize("fixture-owner", "medium", application_mode_id=app_mode)
         with self.assertRaises(ExecutionBlocked):
-            replace(grant, allowed_routes=frozenset()).authorize(grant.owner_id, spec.plan["route_id"])
-        for tier in ("free", "plus"):
-            spec = make_spec("work:nova:ultra")
-            with self.assertRaises(ExecutionBlocked):
-                grant_for(spec, tier=tier).authorize(grant.owner_id, spec.plan["route_id"])
+            ExecutionGrant("fixture-owner", "free", frozenset(("instant",)), True).authorize(
+                "fixture-owner", "medium", application_mode_id="thinking")
 
-    def test_unrecovered_free_thinking_and_auto_are_not_direct_execution_routes(self):
+    def test_complete_work_matrix_and_exact_route_allowlist_are_both_required(self):
+        efforts = ("light", "medium", "high", "extra-high", "max", "ultra")
+        for tier in ("free", "plus", "pro"):
+            for family in ("cosmo", "orion", "nova"):
+                for effort in efforts:
+                    route = f"work:{family}:{effort}"
+                    grant = ExecutionGrant("fixture-owner", tier, frozenset((route,)), True)
+                    expected = tier == "pro" or (tier == "plus" and effort in ("light", "medium", "high"))
+                    with self.subTest(tier=tier, route=route):
+                        if expected:
+                            grant.authorize("fixture-owner", route)
+                        else:
+                            with self.assertRaises(ExecutionBlocked):
+                                grant.authorize("fixture-owner", route)
+        route = "work:nova:high"
+        with self.assertRaises(ExecutionBlocked):
+            ExecutionGrant("fixture-owner", "pro", frozenset(), True).authorize("fixture-owner", route)
+
+    def test_thinking_auto_and_application_aliases_are_not_execution_route_ids(self):
         for route in ("thinking", "kova-auto", "auto", "extra_high"):
             with self.subTest(route=route), self.assertRaises(ExecutionError):
                 ExecutionGrant("fixture", "pro", frozenset((route,)), True)
