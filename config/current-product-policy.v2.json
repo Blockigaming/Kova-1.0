@@ -14,10 +14,16 @@
     "same_underlying_model_across_efforts": true,
     "free": {
       "selectable": false,
-      "routes": ["instant"]
+      "routes": [
+        "instant"
+      ]
     },
     "plus": {
-      "routes": ["instant", "medium", "high"],
+      "routes": [
+        "instant",
+        "medium",
+        "high"
+      ],
       "labels": {
         "instant": "Lite",
         "medium": "Medium",
@@ -25,7 +31,14 @@
       }
     },
     "pro": {
-      "routes": ["instant", "medium", "high", "extra-high", "max", "ultra"],
+      "routes": [
+        "instant",
+        "medium",
+        "high",
+        "extra-high",
+        "max",
+        "ultra"
+      ],
       "labels": {
         "instant": "Lite",
         "medium": "Medium",
@@ -47,19 +60,86 @@
     "default_effort_id": "light",
     "default_label": "Lite",
     "families": {
-      "cosmo": {"display_name": "Kova 5.6 Cosmo", "model_slot": "work-cosmo"},
-      "orion": {"display_name": "Kova 5.6 Orion", "model_slot": "work-orion"},
-      "nova": {"display_name": "Kova 5.6 Nova", "model_slot": "work-nova"}
+      "cosmo": {
+        "display_name": "Kova 5.6 Cosmo",
+        "model_slot": "work-cosmo"
+      },
+      "orion": {
+        "display_name": "Kova 5.6 Orion",
+        "model_slot": "work-orion"
+      },
+      "nova": {
+        "display_name": "Kova 5.6 Nova",
+        "model_slot": "work-nova"
+      }
     },
     "family_model_slots_must_be_distinct": true,
     "same_family_model_across_efforts": true,
     "efforts": {
-      "light": {"label": "Lite", "passes": [0,1,0,0], "maximum_output_tokens": 2048, "engine": "kova-core"},
-      "medium": {"label": "Medium", "passes": [1,1,0,1], "maximum_output_tokens": 4096, "engine": "kova-core"},
-      "high": {"label": "High", "passes": [1,2,1,1], "maximum_output_tokens": 8192, "engine": "kova-core"},
-      "extra-high": {"label": "Extra High", "passes": [2,3,2,2], "maximum_output_tokens": 16384, "engine": "kova-core"},
-      "max": {"label": "Max", "passes": [2,4,2,3], "maximum_output_tokens": 24576, "engine": "kova-core"},
-      "ultra": {"label": "Ultra", "passes": null, "maximum_output_tokens": 32768, "engine": "kova-ultra", "minimum_agents": 2, "maximum_agents": 5, "uses_same_family_model_slot": true}
+      "light": {
+        "label": "Lite",
+        "passes": [
+          0,
+          1,
+          0,
+          0
+        ],
+        "maximum_output_tokens": 2048,
+        "engine": "kova-core"
+      },
+      "medium": {
+        "label": "Medium",
+        "passes": [
+          1,
+          1,
+          0,
+          1
+        ],
+        "maximum_output_tokens": 4096,
+        "engine": "kova-core"
+      },
+      "high": {
+        "label": "High",
+        "passes": [
+          1,
+          2,
+          1,
+          1
+        ],
+        "maximum_output_tokens": 8192,
+        "engine": "kova-core"
+      },
+      "extra-high": {
+        "label": "Extra High",
+        "passes": [
+          2,
+          3,
+          2,
+          2
+        ],
+        "maximum_output_tokens": 16384,
+        "engine": "kova-core"
+      },
+      "max": {
+        "label": "Max",
+        "passes": [
+          2,
+          4,
+          2,
+          3
+        ],
+        "maximum_output_tokens": 24576,
+        "engine": "kova-core"
+      },
+      "ultra": {
+        "label": "Ultra",
+        "passes": null,
+        "maximum_output_tokens": 32768,
+        "engine": "kova-ultra",
+        "minimum_agents": 2,
+        "maximum_agents": 5,
+        "uses_same_family_model_slot": true
+      }
     },
     "entitlements": {
       "free": [],
@@ -78,10 +158,34 @@
     "chat_remains_available_when_exhausted": true
   },
   "model_slots": {
-    "chat-shared": {"upstream_model": null, "upstream_revision": null},
-    "work-cosmo": {"upstream_model": null, "upstream_revision": null},
-    "work-orion": {"upstream_model": null, "upstream_revision": null},
-    "work-nova": {"upstream_model": null, "upstream_revision": null}
+    "chat-shared": {
+      "upstream_model": "Qwen/Qwen3-8B",
+      "upstream_revision": null,
+      "license": "Apache-2.0",
+      "role": "chat",
+      "runtime_verified": false
+    },
+    "work-cosmo": {
+      "upstream_model": "Qwen/Qwen3-0.6B",
+      "upstream_revision": null,
+      "license": "Apache-2.0",
+      "role": "work",
+      "runtime_verified": false
+    },
+    "work-orion": {
+      "upstream_model": "Qwen/Qwen3-1.7B",
+      "upstream_revision": null,
+      "license": "Apache-2.0",
+      "role": "work",
+      "runtime_verified": false
+    },
+    "work-nova": {
+      "upstream_model": "Qwen/Qwen3-4B",
+      "upstream_revision": null,
+      "license": "Apache-2.0",
+      "role": "work",
+      "runtime_verified": false
+    }
   },
   "runtime_integration_required": true,
   "phase_b_ready": false
