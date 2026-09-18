@@ -16,8 +16,10 @@ class CurrentProductPolicyTests(unittest.TestCase):
             "work-orion": "Qwen/Qwen3-1.7B",
             "work-nova": "Qwen/Qwen3-4B",
         })
-        self.assertEqual(report["missing_upstream_revision_slots"],
-                         ["chat-shared", "work-cosmo", "work-orion", "work-nova"])
+        self.assertEqual(report["missing_upstream_revision_slots"], [])
+        self.assertEqual(report["revision_pin_scope"], "upstream_source_only")
+        self.assertEqual(report["verified_weight_artifact_slots"], [])
+        self.assertEqual(report["quantized_serving_artifact_slots"], [])
         self.assertEqual(report["closed_checklist_ids"], [])
         self.assertFalse(report["phase_b_ready"])
 
