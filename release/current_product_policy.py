@@ -97,7 +97,19 @@ def validate():
 
     model_slots = value["model_slots"]
     need(set(model_slots) == {"chat-shared", "work-cosmo", "work-orion", "work-nova"})
-    need(all(item == {"upstream_model": None, "upstream_revision": None} for item in model_slots.values()))
+    expected_models = {
+        "chat-shared": "Qwen/Qwen3-8B",
+        "work-cosmo": "Qwen/Qwen3-0.6B",
+        "work-orion": "Qwen/Qwen3-1.7B",
+        "work-nova": "Qwen/Qwen3-4B",
+    }
+    for slot, model in expected_models.items():
+        item = model_slots[slot]
+        need(item["upstream_model"] == model)
+        need(item["upstream_revision"] is None)
+        need(item["license"] == "Apache-2.0")
+        need(item["runtime_verified"] is False)
+        need(item["role"] == ("chat" if slot == "chat-shared" else "work"))
 
     # Compare newest source policy with the currently published runtime policy.
     runtime_chat_profiles = {route: CHAT_POLICIES[route].get("profile") for route in CHAT_POLICIES}
@@ -128,8 +140,11 @@ def validate():
         "work_effort_contracts_match_current_compute": runtime_efforts_match,
         "runtime_chat_model_identity_aligned": chat_runtime_aligned,
         "runtime_work_model_identity_aligned": runtime_work_families_are_model_slots,
-        "missing_upstream_model_slots": [
-            name for name, item in model_slots.items() if item["upstream_model"] is None
+        "selected_upstream_models": {
+            name: item["upstream_model"] for name, item in model_slots.items()
+        },
+        "missing_upstream_revision_slots": [
+            name for name, item in model_slots.items() if item["upstream_revision"] is None
         ],
         "missing_plus_weekly_units": usage["plus_base_units"] is None,
         "missing_reset_anchor": usage["reset_anchor"] is None,
