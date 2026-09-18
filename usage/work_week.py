@@ -194,7 +194,13 @@ class WorkUsageLedger:
             need(number(row['reserved'], 1) == usage_units(quote.standard_units, fast=quote.fast))
             need((row['settled'] is None) == (row['receipt'] is None))
             if row['settled'] is not None:
-                number(row['settled'], 0, row['reserved'])
+                charged = number(row['settled'], 0, row['reserved'])
+                if quote.fast:
+                    # A persisted debit must be reachable by ceil(3*n/2) for
+                    # whole standard units. A mere upper bound accepts corrupt
+                    # charges such as 1 or 4 and can invent spare capacity.
+                    standard = charged * 2 // 3
+                    need(usage_units(standard, fast=True) == charged)
                 identifier(row['receipt'], 'usage receipt')
         except (ValueError, TypeError, KeyError, IndexError):
             raise WorkUsageError('work usage unavailable') from None

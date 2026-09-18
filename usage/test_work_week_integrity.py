@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 from execution.test_support import make_spec
 from usage import test_work_week as fixtures
-from usage.work_week import WEEK_MS, WorkUsageError
+from usage.work_week import MAX, WEEK_MS, WorkUsageError, usage_units
 
 
 class WorkWeekIntegrityTests(unittest.TestCase):
@@ -131,6 +131,78 @@ class WorkWeekIntegrityTests(unittest.TestCase):
         self.assertFalse(result['metered'])
         self.assertEqual(result['work_units'], 0)
         self.assertFalse(result['authorizes_dispatch'])
+
+    def test_impossible_fast_settlements_cannot_report_or_release_capacity(self):
+        _, spec, quote = self.reserve(fast=True)
+        for charged in (1, 4, 7, 148):
+            with self.subTest(charged=charged):
+                self.ledger.db.execute("DELETE FROM work_usage WHERE job<>'work-1'")
+                self.ledger.db.execute('UPDATE work_usage SET settled=?,receipt=? WHERE job=?',
+                    (charged, 'receipt-corrupt', 'work-1'))
+                operations = (
+                    self.ledger.snapshot,
+                    lambda: self.ledger.reserve_for_job('work-1', spec, quote),
+                    lambda: self.ledger.settle('work-1', 'receipt-corrupt'),
+                    lambda: self.reserve('new-work', units=1),
+                )
+                for operation in operations:
+                    with self.subTest(operation=operation), self.assertRaisesRegex(
+                            WorkUsageError, '^work usage unavailable$'):
+                        operation()
+                rows = self.ledger.db.execute('SELECT job,settled,receipt FROM work_usage').fetchall()
+                self.assertEqual([tuple(row) for row in rows], [('work-1', charged, 'receipt-corrupt')])
+
+    def test_every_reachable_fast_settlement_preserves_round_once_and_zero_use(self):
+        _, spec, quote = self.reserve(fast=True)
+        for standard in range(101):
+            with self.subTest(standard=standard):
+                charged = usage_units(standard, fast=True)
+                self.ledger.db.execute('UPDATE work_usage SET settled=?,receipt=?',
+                    (charged, 'receipt-valid'))
+                snapshot = self.ledger.snapshot()
+                self.assertEqual(snapshot['used_units'], charged)
+                self.assertEqual(snapshot['remaining_units'], 1000 - charged)
+                self.assertEqual(snapshot['reserved_units'], 0)
+                repeated = self.ledger.reserve_for_job('work-1', spec, quote)
+                self.assertEqual(repeated['reservation_state'], 'settled')
+                self.assertFalse(repeated['authorizes_dispatch'])
+                self.ledger.settle('work-1', 'receipt-valid')
+
+    def test_standard_settlements_are_not_subject_to_fast_rounding(self):
+        _, spec, _ = self.reserve()
+        for charged in (1, 4, 7, 100):
+            with self.subTest(charged=charged):
+                self.ledger.db.execute('UPDATE work_usage SET settled=?,receipt=?',
+                    (charged, 'receipt-standard'))
+                self.assertEqual(self.ledger.snapshot()['used_units'], charged)
+                self.ledger.settle('work-1', 'receipt-standard')
+
+    def test_impossible_fast_settlement_stays_blocked_after_reopen(self):
+        self.reserve(fast=True)
+        self.ledger.db.execute('UPDATE work_usage SET settled=1,receipt=?', ('receipt-corrupt',))
+        second = self.open()
+        self.addCleanup(second.close)
+        with self.assertRaisesRegex(WorkUsageError, '^work usage unavailable$'):
+            second.snapshot()
+        with self.assertRaises(WorkUsageError):
+            self.reserve('new-work', units=1, ledger=second)
+        self.assertEqual(self.ledger.db.execute('SELECT count(*) FROM work_usage').fetchone()[0], 1)
+
+    def test_fast_settlement_validation_uses_exact_integer_arithmetic_at_limits(self):
+        self.reserve(fast=True)
+        row = dict(self.ledger.db.execute('SELECT * FROM work_usage').fetchone())
+        row['standard_units'] = MAX * 2 // 3
+        row['reserved'] = usage_units(row['standard_units'], fast=True)
+        row['receipt'] = 'receipt-large'
+        for standard in (0, 1, row['standard_units'] - 1, row['standard_units']):
+            with self.subTest(standard=standard):
+                row['settled'] = usage_units(standard, fast=True)
+                self.ledger._validate_record(row)
+        impossible = row['reserved'] - (row['reserved'] - 1) % 3
+        row['settled'] = impossible
+        self.assertEqual(impossible % 3, 1)
+        with self.assertRaisesRegex(WorkUsageError, '^work usage unavailable$'):
+            self.ledger._validate_record(row)
 
 
 if __name__ == '__main__':

@@ -102,3 +102,37 @@ has been charged and no account balance or subscription has been read or changed
 The absolute Plus weekly allowance and reset anchor remain server inputs. Fast's
 1.25-times internal-cost figure remains an unmeasured target, never a fact shown
 as provider cost or a promise of profitability.
+
+
+## Persisted Fast settlement integrity
+
+Persisted Fast debits must be reachable from a whole standard-unit count under
+`ceil(3 * standard_units / 2)`, not merely fall between zero and the original
+reservation. For example, a stored Fast debit of 1 or 4 cannot be produced by
+that rule. Accepting it could expose invented remaining capacity and allow
+another reservation from an incoherent record. Standard non-Fast settlements
+may legitimately use those values. Zero-use reconciled Fast settlement remains
+valid.
+
+The record validator now checks this property using exact integer arithmetic
+before snapshots, repeated reservations, settlement replies or aggregate
+admission can consume the record. Invalid persisted state is not repaired or
+refunded automatically; operations return the existing sanitized unavailable
+error and leave it unchanged for authorized reconciliation. Reopening the
+reference database does not bypass the check. The check proves internal
+numerical consistency only, not authenticity of a stored receipt or protection
+against arbitrary database-administrator changes.
+
+Five additional regression methods cover impossible debit residues across those
+paths, database reopen, every reachable charge for standard counts zero through
+100, unaffected standard settlements and exact arithmetic at the supported
+integer ceiling. Together with the existing ledger tests, 43 methods pass
+locally. The negative control on the prior implementation produced 22 assertion
+failures across related cases with no harness errors; these are not 22 separate
+vulnerabilities. No existing test or hosted gate was removed.
+
+This correction does not select a weekly allowance/reset anchor, enable Fast,
+change any entitlement or implement the latest application policy. The later
+owner refinement in PR #25 comment 5722472946 still requires separate
+application/authorization work and supplied product inputs. It adds no fixed
+Phase A checklist credit and is not live billing or model-serving evidence.
