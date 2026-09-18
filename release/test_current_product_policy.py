@@ -10,7 +10,13 @@ class CurrentProductPolicyTests(unittest.TestCase):
         self.assertTrue(report["chat_shared_model_policy_valid"])
         self.assertTrue(report["work_three_distinct_model_slots_policy_valid"])
         self.assertTrue(report["work_effort_contracts_match_current_compute"])
-        self.assertEqual(report["missing_upstream_model_slots"],
+        self.assertEqual(report["selected_upstream_models"], {
+            "chat-shared": "Qwen/Qwen3-8B",
+            "work-cosmo": "Qwen/Qwen3-0.6B",
+            "work-orion": "Qwen/Qwen3-1.7B",
+            "work-nova": "Qwen/Qwen3-4B",
+        })
+        self.assertEqual(report["missing_upstream_revision_slots"],
                          ["chat-shared", "work-cosmo", "work-orion", "work-nova"])
         self.assertEqual(report["closed_checklist_ids"], [])
         self.assertFalse(report["phase_b_ready"])
