@@ -61,42 +61,51 @@ python3 -m training.cosmo_artifacts "$KOVA_COSMO_SNAPSHOT"
 Do not use a floating revision, broaden the allowlist, continue after a hash
 failure, upload the snapshot, or place it inside the repository.
 
-## Independent generation authentication
+## Runner-isolated generation signing
 
-Before a future measured evaluation, create one random per-run authentication
-key on a trusted operator system, keep the verifier copy outside the GPU run,
-and expose an owner-only copy to the guarded runner:
+Before a future measured evaluation, create one Ed25519 signing seed on a
+trusted runner-isolation system. Expose the private seed only to the guarded
+runner and distribute only its public key to evaluators and reviewers:
 
 ```sh
 umask 077
-openssl rand -hex 32 > /absolute/protected/path/cosmo-generation-auth.key
-export KOVA_COSMO_EVALUATION_AUTH_KEY_FILE=/absolute/protected/path/cosmo-generation-auth.key
-```
-
-Compute the fingerprint over the decoded 32-byte key, then place only that
-fingerprint in `config/kova-cosmo-generation-trust.v1.json` and change its
-status to `signing_key_pinned_for_guarded_runner` in a separately reviewed,
-exact-head-green source commit:
-
-```sh
 python3 - <<'PY'
 import hashlib
 from pathlib import Path
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-path = Path("/absolute/protected/path/cosmo-generation-auth.key")
-key = bytes.fromhex(path.read_text(encoding="ascii").strip())
-assert len(key) == 32
-print(hashlib.sha256(key).hexdigest())
+path = Path("/absolute/protected/path/cosmo-generation-signing.key")
+key = Ed25519PrivateKey.generate()
+seed = key.private_bytes(
+    encoding=serialization.Encoding.Raw,
+    format=serialization.PrivateFormat.Raw,
+    encryption_algorithm=serialization.NoEncryption(),
+)
+public = key.public_key().public_bytes(
+    encoding=serialization.Encoding.Raw,
+    format=serialization.PublicFormat.Raw,
+)
+with path.open("x", encoding="ascii") as stream:
+    stream.write(seed.hex() + "\n")
+path.chmod(0o600)
+print("public_key_hex=" + public.hex())
+print("public_key_sha256=" + hashlib.sha256(public).hexdigest())
 PY
+export KOVA_COSMO_GENERATION_SIGNING_KEY_FILE=/absolute/protected/path/cosmo-generation-signing.key
 ```
 
-The current trust policy intentionally contains no fingerprint, so arbitrary
-caller-selected keys cannot turn hand-written output into measured evidence.
-The runner and evaluator remain blocked until that separate trust-anchor change
-passes review. Never commit the key itself.
+Place only the printed `public_key_hex` and `public_key_sha256` in
+`config/kova-cosmo-generation-trust.v1.json` and change its status to
+`runner_signing_public_key_pinned` in a separately reviewed, exact-head-green
+source commit. The current trust policy intentionally contains no public key,
+so measured evaluation remains blocked. Never commit, copy to a verifier, or
+place the private seed in the evaluation output.
 
-The runner HMAC-authenticates every generated answer and its case, variant,
-tokens, timing, runtime, adapter, source commit, and plan lineage. Human scores
-remain a separate hash-bound overlay. The evaluator requires the protected key
-again and rejects absent, forged, wrong-key, or post-run-tampered measurements.
-The key is never copied into the evaluation output or repository.
+The runner's Ed25519 signature authenticates every generated answer and its
+case, variant, tokens, timing, runtime, lifecycle phase grant, adapter, source
+commit and plan lineage. Human scores remain a separate hash-bound overlay.
+The evaluator and reviewer expose no signing-key argument; they verify with the
+source-pinned public key and reject absent, forged, wrong-key or post-run-
+tampered measurements. Because verification material cannot create a valid
+signature, an evaluator cannot forge runner-generated answers.

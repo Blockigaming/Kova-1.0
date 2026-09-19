@@ -137,8 +137,7 @@ def _completed_report(original: dict, scored: dict) -> dict:
 
 
 def verify_finalized(generation_path: Path, review_path: Path,
-                     adapter_output: Path, output: Path, *,
-                     generation_auth_key: Path) -> dict:
+                     adapter_output: Path, output: Path) -> dict:
     """Verify the complete hash-bound review chain before completion."""
     try:
         generation_raw = read_raw(generation_path, MAX_BUNDLE_BYTES)
@@ -167,7 +166,6 @@ def verify_finalized(generation_path: Path, review_path: Path,
         adapter = external_existing(str(adapter_output))
         original_report = evaluation.analyze(
             generation, adapter_output=adapter,
-            generation_auth_key=generation_auth_key,
             require_complete=False,
         )
         need(original_report["actual_model_outputs_evaluated"] is False)
@@ -218,7 +216,7 @@ def verify_finalized(generation_path: Path, review_path: Path,
 
 
 def finalize(generation_path: Path, review_path: Path, adapter_output: Path,
-             output: Path, *, generation_auth_key: Path) -> dict:
+             output: Path) -> dict:
     try:
         generation_raw = read_raw(generation_path, MAX_BUNDLE_BYTES)
         review_raw = read_raw(review_path, MAX_REVIEW_BYTES)
@@ -229,7 +227,6 @@ def finalize(generation_path: Path, review_path: Path, adapter_output: Path,
         adapter = external_existing(str(adapter_output))
         original_report = evaluation.analyze(
             bundle, adapter_output=adapter,
-            generation_auth_key=generation_auth_key,
             require_complete=False,
         )
         need(original_report["comparison_complete"] is False)
@@ -263,7 +260,6 @@ def finalize(generation_path: Path, review_path: Path, adapter_output: Path,
         _write(destination / REVIEW_RECEIPT_NAME, receipt)
         verified = verify_finalized(
             generation_path, review_path, adapter, destination,
-            generation_auth_key=generation_auth_key,
         )
         need(verified["actual_model_outputs_evaluated"] is True)
         return {
@@ -296,7 +292,8 @@ def dry_run() -> dict:
         "expected_attempts": 36,
         "score_dimensions": list(evaluation.DIMENSIONS),
         "rubric_sha256": rubric_sha256,
-        "external_generation_auth_key_required": True,
+        "verifier_uses_source_pinned_public_key_only": True,
+        "verifier_private_key_access_allowed": False,
         "answer_editing_allowed": False,
         "review_receipt_required_for_completion": True,
         "human_reviewer_identity_verified": False,
@@ -313,7 +310,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("review", nargs="?", type=Path)
     parser.add_argument("adapter_output", nargs="?", type=Path)
     parser.add_argument("output", nargs="?", type=Path)
-    parser.add_argument("--generation-auth-key", type=Path)
     parser.add_argument("--verify-finalized", action="store_true",
                         help="Verify an existing reviewed output directory")
     arguments = parser.parse_args(argv)
@@ -325,10 +321,8 @@ def main(argv: list[str] | None = None) -> int:
             report = dry_run()
         else:
             need(all(value is not None for value in values))
-            need(arguments.generation_auth_key is not None)
             action = verify_finalized if arguments.verify_finalized else finalize
-            report = action(*values,
-                            generation_auth_key=arguments.generation_auth_key)
+            report = action(*values)
         print(json.dumps(report, sort_keys=True))
         return 0
     except ReviewError as error:

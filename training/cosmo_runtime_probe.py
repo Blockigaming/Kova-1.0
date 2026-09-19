@@ -19,6 +19,7 @@ from training.cosmo_artifacts import (
     verify_snapshot,
 )
 from training.cosmo_hardware import HardwareError, verify_nvidia_t4
+from training.cosmo_lifecycle_authority import acquire_phase_grant
 from training.cosmo_runtime_guard import RuntimeGuardError, require_ready
 from training.kova_cosmo_sft import (
     EXPECTED_TARGETS,
@@ -68,7 +69,7 @@ def completion_tokens(tokenizer, row: dict, max_length: int) -> tuple[list[int],
     return full, labels
 
 
-def authorize_probe() -> tuple[dict, dict]:
+def authorize_probe() -> tuple[dict, dict, dict]:
     value = load_recipe()
     gates = value["account_gates"]
     permissions = value["execution"]
@@ -85,12 +86,27 @@ def authorize_probe() -> tuple[dict, dict]:
     need(type(source_commit) is str)
     verify_source_checkout(source_commit)
     runtime = require_ready()
+    grant = acquire_phase_grant(
+        phase="runtime_probe",
+        source_commit=source_commit,
+        runtime_evidence_sha256=runtime["runtime_evidence_sha256"],
+        lifecycle_id=runtime["lifecycle_id"],
+        preflight_ledger_sequence=runtime["preflight_ledger_sequence"],
+        runtime_deadline_utc=runtime["deadline_utc"],
+        context={
+            "operation": "one_batch_compatibility_probe",
+            "base_model": value["base_model"],
+            "base_revision": value["base_revision"],
+            "region": value["hardware"]["region"],
+            "vm_size": value["hardware"]["vm_size"],
+        },
+    )
     verify_installed_software()
-    return value, runtime
+    return value, runtime, grant
 
 
 def execute_probe() -> dict:
-    value, runtime = authorize_probe()
+    value, runtime, grant = authorize_probe()
 
     # Heavy imports and all model/network access occur only after every source,
     # account, runtime, budget and operator guard above has passed.
@@ -181,6 +197,11 @@ def execute_probe() -> dict:
         "optimizer_steps": 0,
         "peak_gpu_memory_bytes": torch.cuda.max_memory_allocated(0),
         "deallocation_deadline_utc": runtime["deadline_utc"],
+        "lifecycle_id": grant["lifecycle_id"],
+        "lifecycle_phase_grant_sha256": grant["phase_grant_sha256"],
+        "lifecycle_ledger_sequence": grant["ledger_sequence"],
+        "lifecycle_grant_id": grant["grant_id"],
+        "lifecycle_ledger_commit_id": grant["ledger_commit_id"],
         "selected_checkpoint_loaded": True,
         "model_download_observed": None,
         "pilot_epoch_training_started": False,

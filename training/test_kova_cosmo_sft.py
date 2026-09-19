@@ -170,6 +170,7 @@ class KovaCosmoSftTests(unittest.TestCase):
             "trl": "1.13.0",
             "accelerate": "1.15.0",
             "datasets": "5.0.1",
+            "cryptography": "50.0.1",
         })
 
     def test_lora_targets_are_explicit_and_stable(self):
@@ -223,6 +224,48 @@ class KovaCosmoSftTests(unittest.TestCase):
         }):
             with self.assertRaises(recipe.RecipeError):
                 recipe.execute()
+
+    def test_training_reserves_remote_phase_before_heavy_imports(self):
+        value = deepcopy(recipe.load_recipe())
+        value["account_gates"]["eastus_ncast4_quota_verified"] = True
+        value["account_gates"]["runtime_compatibility_verified"] = True
+        runtime = {
+            "runtime_evidence_sha256": "e" * 64,
+            "deadline_utc": "2026-09-19T19:40:00Z",
+            "lifecycle_id": "lifecycle-001",
+            "preflight_ledger_sequence": 1,
+        }
+        grant = {"phase_grant_sha256": "f" * 64}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            output = root / "output"
+            with patch.object(recipe, "load_recipe", return_value=value), \
+                 patch.dict("os.environ", {
+                     "KOVA_CONFIRM_PAID_TRAINING": "YES",
+                     "KOVA_COSMO_VERIFIED_SNAPSHOT": str(snapshot),
+                 }, clear=True), \
+                 patch.object(recipe, "require_runtime_ready", return_value=runtime), \
+                 patch.object(recipe, "verify_installed_software"), \
+                 patch.object(recipe, "verify_snapshot", return_value={
+                     "model.safetensors": {"sha256": "0" * 64, "bytes": 1}
+                 }), \
+                 patch.object(
+                     recipe, "resolve_output_directory",
+                     return_value=(output, "a" * 40),
+                 ), \
+                 patch.object(recipe, "verify_source_checkout"), \
+                 patch.object(
+                     recipe, "reserve_training_phase", return_value=grant
+                 ) as acquire, \
+                 patch.dict("sys.modules", {"torch": None}):
+                with self.assertRaises(ModuleNotFoundError):
+                    recipe.execute()
+        self.assertEqual(acquire.call_args.kwargs["phase"], "training")
+        self.assertEqual(
+            acquire.call_args.kwargs["runtime_evidence_sha256"], "e" * 64
+        )
 
     def test_operator_environment_variable_cannot_override_source_guards(self):
         with patch.dict("os.environ", {"KOVA_CONFIRM_PAID_TRAINING": "YES"}):

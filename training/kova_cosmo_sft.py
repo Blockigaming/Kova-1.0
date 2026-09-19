@@ -17,10 +17,6 @@ from release.model_revisions import MODEL_SOURCE_REFERENCES
 from training.cosmo_adapter_receipt import ReceiptError, write_receipt
 from training.cosmo_artifacts import ArtifactError, verify_snapshot
 from training.cosmo_hardware import HardwareError, verify_nvidia_t4
-from training.cosmo_runtime_guard import (
-    consume_training_authorization,
-    require_ready as require_runtime_ready,
-)
 from training.identity_pilot import load as load_identity_pilot
 from training.identity_pilot import format_messages
 
@@ -35,6 +31,7 @@ EXPECTED_SOFTWARE = {
     "trl": "1.13.0",
     "accelerate": "1.15.0",
     "datasets": "5.0.1",
+    "cryptography": "50.0.1",
 }
 EXPECTED_TARGETS = [
     "q_proj",
@@ -220,6 +217,20 @@ def resolve_output_directory() -> tuple[Path, str]:
     return resolved, source_commit
 
 
+def reserve_training_phase(**arguments) -> dict:
+    """Load the crypto/network authority only after all source gates pass."""
+    from training.cosmo_lifecycle_authority import acquire_phase_grant
+
+    return acquire_phase_grant(**arguments)
+
+
+def require_runtime_ready() -> dict:
+    """Load signed-runtime verification only on the paid execution path."""
+    from training.cosmo_runtime_guard import require_ready
+
+    return require_ready()
+
+
 def execute() -> dict:
     value = load_recipe()
     # Source control plus an operator acknowledgement are both required. The
@@ -245,16 +256,27 @@ def execute() -> dict:
         raise RecipeError("kova cosmo sft recipe rejected") from None
     need(ROOT not in resolved_snapshot.parents and resolved_snapshot != ROOT)
     try:
-        verify_snapshot(resolved_snapshot)
+        snapshot_inventory = verify_snapshot(resolved_snapshot)
     except ArtifactError:
         raise RecipeError("kova cosmo sft recipe rejected") from None
     output, source_commit = resolve_output_directory()
     verify_source_checkout(source_commit)
-    run_authorization = consume_training_authorization(
+    phase_grant = reserve_training_phase(
+        phase="training",
         source_commit=source_commit,
-        output_directory=output,
         runtime_evidence_sha256=runtime_report["runtime_evidence_sha256"],
+        lifecycle_id=runtime_report["lifecycle_id"],
+        preflight_ledger_sequence=runtime_report[
+            "preflight_ledger_sequence"
+        ],
         runtime_deadline_utc=runtime_report["deadline_utc"],
+        context={
+            "operation": "single_lora_sft_run",
+            "base_model": value["base_model"],
+            "base_revision": value["base_revision"],
+            "output_directory": str(output),
+            "snapshot_inventory": snapshot_inventory,
+        },
     )
     os.environ.update({
         "HF_HUB_OFFLINE": "1",
@@ -336,9 +358,12 @@ def execute() -> dict:
         return write_receipt(
             output, source_commit,
             runtime_evidence_sha256=runtime_report["runtime_evidence_sha256"],
-            training_run_consumption_sha256=run_authorization[
-                "training_run_consumption_sha256"
+            lifecycle_phase_grant_sha256=phase_grant[
+                "phase_grant_sha256"
             ],
+            lifecycle_id=phase_grant["lifecycle_id"],
+            lifecycle_grant_id=phase_grant["grant_id"],
+            lifecycle_ledger_commit_id=phase_grant["ledger_commit_id"],
             global_steps=training_result.global_step,
             training_loss=training_result.training_loss,
         )
@@ -356,8 +381,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         print(json.dumps(dry_run(), sort_keys=True))
         return 0
-    except RecipeError as error:
-        print(str(error), file=sys.stderr)
+    except Exception:
+        print("kova cosmo sft recipe rejected", file=sys.stderr)
         return 1
 
 

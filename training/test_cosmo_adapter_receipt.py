@@ -17,14 +17,20 @@ from training.kova_cosmo_sft import EXPECTED_TARGETS
 class CosmoAdapterReceiptTests(unittest.TestCase):
     source_commit = "a" * 40
     runtime_evidence_sha256 = "e" * 64
-    training_run_consumption_sha256 = "f" * 64
+    lifecycle_phase_grant_sha256 = "f" * 64
+    lifecycle_id = "lifecycle-001"
+    lifecycle_grant_id = "grant-training-001"
+    lifecycle_ledger_commit_id = "ledger-commit-002"
 
     def write_receipt(self, output: Path):
         return receipt.write_receipt(
             output, self.source_commit,
             runtime_evidence_sha256=self.runtime_evidence_sha256,
-            training_run_consumption_sha256=
-                self.training_run_consumption_sha256,
+            lifecycle_phase_grant_sha256=
+                self.lifecycle_phase_grant_sha256,
+            lifecycle_id=self.lifecycle_id,
+            lifecycle_grant_id=self.lifecycle_grant_id,
+            lifecycle_ledger_commit_id=self.lifecycle_ledger_commit_id,
             global_steps=18,
             training_loss=1.25,
         )
@@ -33,8 +39,11 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
         return receipt.expected_receipt(
             output, self.source_commit,
             runtime_evidence_sha256=self.runtime_evidence_sha256,
-            training_run_consumption_sha256=
-                self.training_run_consumption_sha256,
+            lifecycle_phase_grant_sha256=
+                self.lifecycle_phase_grant_sha256,
+            lifecycle_id=self.lifecycle_id,
+            lifecycle_grant_id=self.lifecycle_grant_id,
+            lifecycle_ledger_commit_id=self.lifecycle_ledger_commit_id,
             global_steps=18,
             training_loss=1.25,
         )
@@ -92,10 +101,16 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
                              "c1899de289a04d12100db370d81485cdf75e47ca")
             for field in ("dataset_sha256", "prompt_sha256", "review_sha256",
                           "recipe_sha256", "runtime_guard_sha256",
+                          "lifecycle_trust_sha256",
                           "runtime_evidence_sha256",
-                          "training_run_consumption_sha256",
+                          "lifecycle_phase_grant_sha256",
                           "evaluation_plan_sha256", "software_lock_sha256"):
                 self.assertRegex(value["lineage"][field], r"^[0-9a-f]{64}$")
+            self.assertEqual(value["lineage"]["lifecycle_id"], self.lifecycle_id)
+            self.assertEqual(
+                report["lifecycle_ledger_commit_id"],
+                self.lifecycle_ledger_commit_id,
+            )
             self.assertFalse(value["actual_model_outputs_evaluated"])
             self.assertFalse(value["deployment_authorized"])
             self.assertFalse(value["phase_b_ready"])

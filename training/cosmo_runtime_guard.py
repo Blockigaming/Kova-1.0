@@ -1,15 +1,14 @@
 """Fail-closed cost and deallocation guard for the bounded Cosmo GPU pilot.
 
-This module validates source policy and operator-supplied control-plane evidence.
-It does not call Azure, create resources, download weights, or start training.
+This module validates source policy and independently signed control-plane
+evidence. It does not call Azure, create resources, download weights, or start
+training.
 """
 from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
-import hashlib
-import hmac
 import json
 import os
 from pathlib import Path
@@ -17,17 +16,17 @@ import re
 import sys
 
 from release.model_revisions import MODEL_SOURCE_REFERENCES
+from training.cosmo_lifecycle_authority import (
+    AuthorityError,
+    PILOT_ID,
+    load_trust_policy as load_lifecycle_trust_policy,
+    read_signed_record,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "config/kova-cosmo-runtime-guard.v1.json"
 EVIDENCE_ENV = "KOVA_COSMO_RUNTIME_EVIDENCE"
-TRAINING_AUTHORIZATION_ENV = "KOVA_COSMO_TRAINING_RUN_AUTHORIZATION"
-TRAINING_AUTHORIZATION_NAME = "training-run-authorization.v1.json"
-TRAINING_CONSUMPTION_NAME = "training-run-consumed.v1.json"
-PILOT_ID = "kova-cosmo-qwen3-0.6b-eastus-t4-v1"
 MONEY = re.compile(r"(?:0|[1-9][0-9]*)\.[0-9]{4}")
-HEX40 = re.compile(r"[0-9a-f]{40}")
-HEX64 = re.compile(r"[0-9a-f]{64}")
 AZURE_UUID = re.compile(
     r"[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-"
     r"[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}"
@@ -37,7 +36,6 @@ UTC_TIMESTAMP = re.compile(
     r"20[0-9]{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T"
     r"(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z"
 )
-MAX_EVIDENCE_BYTES = 1024 * 1024
 
 
 class RuntimeGuardError(ValueError):
@@ -114,26 +112,15 @@ def load_policy(root: Path = ROOT) -> dict:
         })
         pilot = value["pilot"]
         need(type(pilot) is dict and list(pilot) == [
-            "pilot_id", "maximum_training_runs",
-            "training_run_authorization",
+            "pilot_id", "maximum_paid_phase_grants",
+            "maximum_training_runs",
             "automatic_deallocation_required", "automatic_cleanup_required",
             "cleanup_scope", "production_deployment_authorized",
             "production_integration_authorized",
         ])
         need(pilot["pilot_id"] == PILOT_ID)
+        need(pilot["maximum_paid_phase_grants"] == 3)
         need(pilot["maximum_training_runs"] == 1)
-        authorization = pilot["training_run_authorization"]
-        need(type(authorization) is dict and list(authorization) == [
-            "status", "manifest_sha256", "environment_variable",
-        ])
-        need(authorization["environment_variable"] ==
-             TRAINING_AUTHORIZATION_ENV)
-        if authorization["status"] == "manifest_provisioning_required":
-            need(authorization["manifest_sha256"] is None)
-        else:
-            need(authorization["status"] == "single_manifest_pinned")
-            need(type(authorization["manifest_sha256"]) is str and
-                 HEX64.fullmatch(authorization["manifest_sha256"]) is not None)
         need(pilot["automatic_deallocation_required"] is True)
         need(pilot["automatic_cleanup_required"] is True)
         need(pilot["cleanup_scope"] == "pilot_resource_group")
@@ -159,12 +146,13 @@ def load_policy(root: Path = ROOT) -> dict:
         need(pricing["budget_alert_is_hard_stop"] is False)
 
         need(value["required_controls"] == {
-            "atomic_single_run_authorization": True,
+            "remote_append_only_paid_phase_ledger": True,
             "control_plane_deallocation_deadline": True,
             "independent_watchdog": True,
             "watchdog_permission_test": True,
             "automatic_cleanup_execution_provenance": True,
             "scoped_resource_group_deleted_inventory": True,
+            "signed_independent_control_plane_evidence": True,
             "no_public_ip": True,
             "post_run_power_state_verification": True,
             "post_run_residual_resource_inventory": True,
@@ -202,16 +190,14 @@ def load_policy(root: Path = ROOT) -> dict:
 def load_evidence_record(path: Path, *,
                          repository_root: Path = ROOT) -> tuple[dict, str]:
     try:
-        need(path.is_absolute())
-        resolved = path.resolve(strict=True)
-        repository = repository_root.resolve(strict=True)
-        need(repository not in resolved.parents and resolved != repository)
-        with resolved.open("rb") as stream:
-            raw = stream.read(MAX_EVIDENCE_BYTES + 1)
-        need(0 < len(raw) <= MAX_EVIDENCE_BYTES)
-        value = parse_json(raw.decode("utf-8"))
+        value, evidence_sha256 = read_signed_record(
+            path, expected_kind="kova_cosmo_runtime_preflight",
+            repository_root=repository_root,
+        )
         need(type(value) is dict and list(value) == [
-            "schema_version", "captured_at_utc", "subscription_id",
+            "schema_version", "kind", "issuer", "pilot_id", "lifecycle_id",
+            "ledger_sequence", "provider_observation_id",
+            "azure_query_source", "captured_at_utc", "subscription_id",
             "resource_group", "cleanup_scope_resource_group_id",
             "resource_group_exclusive_to_pilot", "vm_name", "region", "vm_size",
             "family_quota_limit_vcpus", "capacity_confirmed",
@@ -224,6 +210,13 @@ def load_evidence_record(path: Path, *,
             "cleanup_permission_tested_at_utc", "cleanup_test_result",
         ])
         need(value["schema_version"] == 1)
+        need(value["pilot_id"] == PILOT_ID)
+        need(nonempty(value["lifecycle_id"]))
+        need(type(value["ledger_sequence"]) is int and
+             0 < value["ledger_sequence"] < 2**63)
+        need(nonempty(value["provider_observation_id"]))
+        need(value["azure_query_source"] ==
+             "independent_azure_control_plane_reader")
         timestamp(value["captured_at_utc"])
         for key in ("subscription_id", "resource_group", "vm_name",
                     "control_plane_deallocation_rule_id",
@@ -250,9 +243,9 @@ def load_evidence_record(path: Path, *,
         timestamp(value["cleanup_permission_tested_at_utc"])
         need(value["watchdog_test_result"] == "passed")
         need(value["cleanup_test_result"] == "passed")
-        return value, hashlib.sha256(raw).hexdigest()
+        return value, evidence_sha256
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError,
-            RecursionError, AttributeError):
+            RecursionError, AttributeError, AuthorityError):
         raise RuntimeGuardError("kova cosmo runtime guard rejected") from None
 
 
@@ -293,7 +286,7 @@ def assess_preflight(policy: dict, evidence: dict, *, now: datetime) -> dict:
         "approved_all_in_budget_usd": pricing["approved_all_in_budget_usd"],
         "pilot_id": pilot["pilot_id"],
         "maximum_training_runs": pilot["maximum_training_runs"],
-        "single_training_run_authorization_required": True,
+        "remote_paid_phase_grant_required": True,
         "automatic_deallocation_required": pilot[
             "automatic_deallocation_required"
         ],
@@ -321,148 +314,25 @@ def require_ready(*, root: Path = ROOT, evidence_path: Path | None = None,
         policy, evidence, now=now or datetime.now(timezone.utc)
     )
     report["runtime_evidence_sha256"] = evidence_sha256
+    report["lifecycle_id"] = evidence["lifecycle_id"]
+    report["preflight_ledger_sequence"] = evidence["ledger_sequence"]
     return report
-
-
-def consume_training_authorization(
-    *, source_commit: str, output_directory: Path,
-    runtime_evidence_sha256: str, runtime_deadline_utc: str,
-    root: Path = ROOT, authorization_path: Path | None = None,
-    now: datetime | None = None,
-) -> dict:
-    """Atomically consume the sole source-pinned training authorization.
-
-    The reviewed manifest pins its own state directory, so copying it to a new
-    directory cannot create another usable authorization.  The exclusive
-    marker creation is the irreversible at-most-once boundary and occurs
-    before any training dependency is imported.
-    """
-    try:
-        policy = load_policy(root)
-        pilot = policy["pilot"]
-        authorization = pilot["training_run_authorization"]
-        need(pilot["maximum_training_runs"] == 1)
-        need(authorization["status"] == "single_manifest_pinned")
-        expected_manifest_sha256 = authorization["manifest_sha256"]
-        need(type(expected_manifest_sha256) is str and
-             HEX64.fullmatch(expected_manifest_sha256) is not None)
-        need(type(source_commit) is str and
-             HEX40.fullmatch(source_commit) is not None)
-        need(type(runtime_evidence_sha256) is str and
-             HEX64.fullmatch(runtime_evidence_sha256) is not None)
-        deadline = timestamp(runtime_deadline_utc)
-        current = now or datetime.now(timezone.utc)
-        need(current.tzinfo is not None and
-             current.utcoffset() == timedelta(0))
-
-        if authorization_path is None:
-            raw_path = os.environ.get(TRAINING_AUTHORIZATION_ENV)
-            need(nonempty(raw_path, 4096))
-            authorization_path = Path(raw_path)
-        need(authorization_path.is_absolute() and
-             authorization_path.name == TRAINING_AUTHORIZATION_NAME and
-             authorization_path.is_file() and
-             not authorization_path.is_symlink())
-        resolved = authorization_path.resolve(strict=True)
-        repository = root.resolve(strict=True)
-        state_directory = resolved.parent
-        need(repository != resolved and repository not in resolved.parents)
-        need(state_directory.is_dir() and not state_directory.is_symlink())
-        need(state_directory.stat().st_mode & 0o077 == 0)
-        need(resolved.stat().st_mode & 0o077 == 0)
-        with resolved.open("rb") as stream:
-            raw = stream.read(MAX_EVIDENCE_BYTES + 1)
-        need(0 < len(raw) <= MAX_EVIDENCE_BYTES)
-        manifest_sha256 = hashlib.sha256(raw).hexdigest()
-        need(hmac.compare_digest(manifest_sha256,
-                                 expected_manifest_sha256))
-        value = parse_json(raw.decode("utf-8"))
-        need(type(value) is dict and list(value) == [
-            "schema_version", "kind", "pilot_id", "output_directory",
-            "state_directory", "maximum_training_runs",
-            "issued_at_utc", "expires_at_utc",
-        ])
-        need(value["schema_version"] == 1)
-        need(value["kind"] == "kova_cosmo_single_training_authorization")
-        need(value["pilot_id"] == pilot["pilot_id"])
-        need(value["state_directory"] == str(state_directory))
-        need(value["maximum_training_runs"] == 1)
-        try:
-            parent = output_directory.parent.resolve(strict=True)
-        except OSError:
-            raise RuntimeGuardError(
-                "kova cosmo runtime guard rejected"
-            ) from None
-        expected_output = parent / output_directory.name
-        need(output_directory.is_absolute() and
-             value["output_directory"] == str(expected_output))
-        issued = timestamp(value["issued_at_utc"])
-        expires = timestamp(value["expires_at_utc"])
-        need(issued <= current < expires)
-        need(expires <= issued + timedelta(days=7))
-        need(current < deadline <= expires)
-
-        consumed = {
-            "schema_version": 1,
-            "kind": "kova_cosmo_training_run_consumption",
-            "pilot_id": pilot["pilot_id"],
-            "authorization_manifest_sha256": manifest_sha256,
-            "source_commit": source_commit,
-            "runtime_evidence_sha256": runtime_evidence_sha256,
-            "output_directory": str(expected_output),
-            "consumed_at_utc": current.strftime("%Y-%m-%dT%H:%M:%SZ"),
-        }
-        marker_raw = (json.dumps(
-            consumed, indent=2, ensure_ascii=True, allow_nan=False
-        ) + "\n").encode("ascii")
-        marker = state_directory / TRAINING_CONSUMPTION_NAME
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
-        descriptor = os.open(marker, flags, 0o600)
-        try:
-            with os.fdopen(descriptor, "wb", closefd=True) as stream:
-                descriptor = -1
-                stream.write(marker_raw)
-                stream.flush()
-                os.fsync(stream.fileno())
-            directory_fd = os.open(state_directory, os.O_RDONLY)
-            try:
-                os.fsync(directory_fd)
-            finally:
-                os.close(directory_fd)
-        finally:
-            if descriptor >= 0:
-                os.close(descriptor)
-        return {
-            "status": "single_training_run_authorization_consumed",
-            "pilot_id": pilot["pilot_id"],
-            "authorization_manifest_sha256": manifest_sha256,
-            "training_run_consumption_sha256": hashlib.sha256(
-                marker_raw
-            ).hexdigest(),
-            "maximum_training_runs": 1,
-            "consumed_at_utc": consumed["consumed_at_utc"],
-        }
-    except (OSError, ValueError, TypeError, KeyError, UnicodeError,
-            RecursionError, AttributeError, json.JSONDecodeError):
-        raise RuntimeGuardError("kova cosmo runtime guard rejected") from None
 
 
 def verify_post_run(preflight: dict, post_run_path: Path,
                     root: Path = ROOT) -> dict:
     """Verify deallocation evidence and enumerate every residual resource."""
     try:
-        need(post_run_path.is_absolute() and not post_run_path.is_symlink())
-        resolved = post_run_path.resolve(strict=True)
-        repository = root.resolve(strict=True)
-        need(repository not in resolved.parents and resolved != repository)
-        with resolved.open("rb") as stream:
-            raw = stream.read(MAX_EVIDENCE_BYTES + 1)
-        need(0 < len(raw) <= MAX_EVIDENCE_BYTES)
-        value = parse_json(raw.decode("utf-8"))
+        value, evidence_sha256 = read_signed_record(
+            post_run_path,
+            expected_kind="kova_cosmo_post_run_lifecycle",
+            repository_root=root,
+        )
         need(type(value) is dict and list(value) == [
-            "schema_version", "observed_at_utc", "allocation_started_at_utc",
+            "schema_version", "kind", "issuer", "pilot_id", "lifecycle_id",
+            "ledger_sequence", "provider_observation_id",
+            "azure_query_source", "observed_at_utc",
+            "allocation_started_at_utc",
             "deallocated_at_utc", "subscription_id",
             "resource_group", "vm_name", "deallocation_deadline_utc",
             "power_state", "public_ip_attached", "allocated_seconds",
@@ -473,6 +343,15 @@ def verify_post_run(preflight: dict, post_run_path: Path,
             "automatic_cleanup_execution", "scoped_inventory",
         ])
         need(value["schema_version"] == 1)
+        need(value["pilot_id"] == preflight["pilot_id"] == PILOT_ID)
+        need(value["lifecycle_id"] == preflight["lifecycle_id"])
+        need(type(value["ledger_sequence"]) is int and
+             value["ledger_sequence"] > preflight["ledger_sequence"])
+        need(nonempty(value["provider_observation_id"]))
+        need(value["provider_observation_id"] !=
+             preflight["provider_observation_id"])
+        need(value["azure_query_source"] ==
+             "independent_azure_control_plane_reader")
         observed = timestamp(value["observed_at_utc"])
         started = timestamp(value["allocation_started_at_utc"])
         deallocated = timestamp(value["deallocated_at_utc"])
@@ -589,7 +468,7 @@ def verify_post_run(preflight: dict, post_run_path: Path,
                 "scope_resource_group_id"
             ],
             "resource_group_deleted": True,
-            "post_run_evidence_sha256": hashlib.sha256(raw).hexdigest(),
+            "post_run_evidence_sha256": evidence_sha256,
             "residual_resource_count": len(resources),
             "billable_residual_resource_count": sum(
                 item["billable"] for item in resources
@@ -599,7 +478,7 @@ def verify_post_run(preflight: dict, post_run_path: Path,
             "closed_checklist_ids": [],
         }
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError,
-            RecursionError, AttributeError):
+            RecursionError, AttributeError, AuthorityError):
         raise RuntimeGuardError("kova cosmo runtime guard rejected") from None
 
 
@@ -611,9 +490,9 @@ def dry_run(root: Path = ROOT) -> dict:
         blockers.append("resource_creation_release_withheld")
     if not approvals["spending_release"]:
         blockers.append("spending_release_withheld")
-    if (policy["pilot"]["training_run_authorization"]["status"] !=
-            "single_manifest_pinned"):
-        blockers.append("single_training_run_authorization_unpinned")
+    lifecycle_trust = load_lifecycle_trust_policy(root)
+    if lifecycle_trust["status"] != "authority_pinned":
+        blockers.append("lifecycle_authority_unprovisioned")
     if not os.environ.get(EVIDENCE_ENV):
         blockers.append("runtime_evidence_missing")
     return {
@@ -626,8 +505,11 @@ def dry_run(root: Path = ROOT) -> dict:
             "maximum_allocated_minutes"
         ],
         "pilot_id": policy["pilot"]["pilot_id"],
+        "maximum_paid_phase_grants": policy["pilot"][
+            "maximum_paid_phase_grants"
+        ],
         "maximum_training_runs": policy["pilot"]["maximum_training_runs"],
-        "single_training_run_authorization_required": True,
+        "remote_append_only_paid_phase_ledger_required": True,
         "automatic_deallocation_required": policy["pilot"][
             "automatic_deallocation_required"
         ],
@@ -665,8 +547,8 @@ def main(argv: list[str] | None = None) -> int:
             report = require_ready() if arguments.require_ready else dry_run()
         print(json.dumps(report, sort_keys=True))
         return 0
-    except RuntimeGuardError as error:
-        print(str(error), file=sys.stderr)
+    except (RuntimeGuardError, AuthorityError):
+        print("kova cosmo runtime guard rejected", file=sys.stderr)
         return 1
 
 

@@ -153,8 +153,7 @@ def load_plan(root: Path = pilot.ROOT) -> tuple[dict, dict[str, dict], str]:
 
 def analyze(bundle: dict, *, root: Path = pilot.ROOT,
             require_complete: bool = False,
-            adapter_output: Path | None = None,
-            generation_auth_key: Path | None = None) -> dict:
+            adapter_output: Path | None = None) -> dict:
     plan, cases, plan_sha256 = load_plan(root)
     recipe = load_recipe(root)
     need(type(bundle) is dict and list(bundle) == [
@@ -175,30 +174,24 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
 
     if bundle["kind"] == "measured":
         need(adapter_output is not None and adapter_output.is_absolute())
-        need(generation_auth_key is not None and
-             generation_auth_key.is_absolute())
         try:
             trust = load_generation_trust_policy(root)
             need(trust["status"] ==
-                 "signing_key_pinned_for_guarded_runner")
+                 "runner_signing_public_key_pinned")
             receipt = verify_adapter_receipt(
                 adapter_output,
                 expected_source_commit=bundle["source_commit"],
                 root=root,
             )
             attestation = verify_runner_attestation(
-                bundle, generation_auth_key,
-                expected_key_fingerprint=trust[
-                    "key_fingerprint_sha256"
-                ],
-                repository_root=root,
+                bundle, public_key_hex_value=trust["public_key_hex"],
             )
         except (ReceiptError, AttestationError, EvaluationError):
             raise EvaluationError("cosmo evaluation evidence rejected") from None
         need(receipt["adapter_sha256"] == bundle["adapter_sha256"])
         need(receipt["receipt_sha256"] == bundle["adapter_receipt_sha256"])
     else:
-        need(adapter_output is None and generation_auth_key is None)
+        need(adapter_output is None)
         need(bundle["runner_attestation"] is None)
         attestation = None
 
@@ -222,8 +215,10 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
         runtime = row["runtime"]
         need(type(runtime) is dict and list(runtime) == [
             "base_model", "base_revision", "adapter_sha256", "adapter_receipt_sha256",
-            "software_lock_sha256", "runtime_evidence_sha256", "hardware",
-            "precision", "quantization",
+            "software_lock_sha256", "runtime_evidence_sha256",
+            "lifecycle_id", "lifecycle_grant_id",
+            "lifecycle_ledger_commit_id", "lifecycle_phase_grant_sha256",
+            "hardware", "precision", "quantization",
         ])
         need(runtime["base_model"] == recipe["base_model"])
         need(runtime["base_revision"] == recipe["base_revision"])
@@ -231,6 +226,14 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
              HEX64.fullmatch(runtime["software_lock_sha256"]) is not None)
         need(type(runtime["runtime_evidence_sha256"]) is str and
              HEX64.fullmatch(runtime["runtime_evidence_sha256"]) is not None)
+        need(type(runtime["lifecycle_phase_grant_sha256"]) is str and
+             HEX64.fullmatch(runtime["lifecycle_phase_grant_sha256"])
+             is not None)
+        for field in ("lifecycle_id", "lifecycle_grant_id",
+                      "lifecycle_ledger_commit_id"):
+            need(type(runtime[field]) is str and 0 < len(runtime[field]) <= 256)
+        if bundle["kind"] == "measured":
+            need(runtime["lifecycle_id"] == receipt["lifecycle_id"])
         for field in ("hardware", "precision", "quantization"):
             need(type(runtime[field]) is str and 0 < len(runtime[field]) <= 128)
         expected_adapter = bundle["adapter_sha256"] if row["variant"] == "trained_adapter" else None
@@ -248,7 +251,7 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
         # verdicts are accepted exclusively by cosmo_evaluation_review, which
         # binds the original bundle, rubric, score overlay, reviewed bundle and
         # receipt.  This blocks callers from editing scores in-place while
-        # retaining a still-valid runner HMAC.
+        # retaining a still-valid runner signature.
         if bundle["kind"] == "measured":
             need(all(value == "pending"
                      for value in row["scores"].values()))
@@ -317,8 +320,6 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--adapter-output", type=Path,
                         help="External adapter run directory required for measured evidence")
-    parser.add_argument("--generation-auth-key", type=Path,
-                        help="Protected external key for measured evidence")
     arguments = parser.parse_args(argv)
     try:
         if arguments.bundle is None:
@@ -332,7 +333,7 @@ def main(argv: list[str] | None = None) -> int:
                 "review_receipt_required_for_measured_completion": True,
                 "generation_signing_key_pinned": (
                     trust["status"] ==
-                    "signing_key_pinned_for_guarded_runner"
+                    "runner_signing_public_key_pinned"
                 ),
                 "phase_b_ready": False, "closed_checklist_ids": [],
             }
@@ -343,7 +344,6 @@ def main(argv: list[str] | None = None) -> int:
                 value,
                 require_complete=arguments.require_complete,
                 adapter_output=arguments.adapter_output,
-                generation_auth_key=arguments.generation_auth_key,
             )
         print(json.dumps(report, sort_keys=True))
     except (EvaluationError, AttestationError):

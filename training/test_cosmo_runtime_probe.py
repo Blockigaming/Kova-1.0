@@ -98,6 +98,37 @@ class CosmoRuntimeProbeTests(unittest.TestCase):
             with self.assertRaises(probe.RuntimeProbeError):
                 probe.authorize_probe()
 
+    def test_probe_reserves_remote_phase_before_dependency_or_model_access(self):
+        value = deepcopy(recipe.load_recipe())
+        value["account_gates"]["eastus_ncast4_quota_verified"] = True
+        runtime = {
+            "runtime_evidence_sha256": "e" * 64,
+            "deadline_utc": "2026-09-19T19:10:00Z",
+            "lifecycle_id": "lifecycle-001",
+            "preflight_ledger_sequence": 1,
+        }
+        with patch.object(probe, "load_recipe", return_value=value), \
+             patch.dict(os.environ, {
+                 probe.CONFIRMATION_ENV: "YES",
+                 "KOVA_SOURCE_COMMIT": "a" * 40,
+             }, clear=True), \
+             patch.object(probe, "verify_source_checkout"), \
+             patch.object(probe, "require_ready", return_value=runtime), \
+             patch.object(
+                 probe, "acquire_phase_grant",
+                 side_effect=RuntimeError("grant boundary reached"),
+             ) as acquire, \
+             patch.object(
+                 probe, "verify_installed_software",
+                 side_effect=AssertionError("dependencies probed before grant"),
+             ):
+            with self.assertRaisesRegex(RuntimeError, "grant boundary reached"):
+                probe.authorize_probe()
+        self.assertEqual(acquire.call_args.kwargs["phase"], "runtime_probe")
+        self.assertEqual(
+            acquire.call_args.kwargs["runtime_evidence_sha256"], "e" * 64
+        )
+
     def test_real_qwen_target_inventory_requires_every_target_per_layer(self):
         self.assertEqual(probe.target_inventory(FakeModel()), {
             target: 2 for target in recipe.EXPECTED_TARGETS

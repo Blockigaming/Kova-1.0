@@ -124,9 +124,6 @@ class CosmoEvaluationReviewTests(unittest.TestCase):
             )
             adapter = root / "adapter-run"
             adapter.mkdir()
-            generation_auth_key = root / "generation-auth.key"
-            generation_auth_key.write_text("ab" * 32, encoding="ascii")
-            generation_auth_key.chmod(0o600)
             output = root / "reviewed"
             generation_report = {
                 "kind": "measured",
@@ -141,7 +138,6 @@ class CosmoEvaluationReviewTests(unittest.TestCase):
             ):
                 report = review.finalize(
                     generation, overlay, adapter, output,
-                    generation_auth_key=generation_auth_key,
                 )
             self.assertTrue(
                 (output / "reviewed-evaluation-bundle.v1.json").is_file()
@@ -180,9 +176,6 @@ class CosmoEvaluationReviewTests(unittest.TestCase):
                 )
                 adapter = root / "adapter-run"
                 adapter.mkdir()
-                key = root / "generation-auth.key"
-                key.write_text("ab" * 32, encoding="ascii")
-                key.chmod(0o600)
                 output = root / "reviewed"
                 with patch.object(
                     review.evaluation, "analyze",
@@ -190,7 +183,6 @@ class CosmoEvaluationReviewTests(unittest.TestCase):
                 ):
                     review.finalize(
                         generation, overlay, adapter, output,
-                        generation_auth_key=key,
                     )
                     if target == "receipt":
                         path = output / review.REVIEW_RECEIPT_NAME
@@ -205,7 +197,6 @@ class CosmoEvaluationReviewTests(unittest.TestCase):
                     with self.assertRaises(review.ReviewError):
                         review.verify_finalized(
                             generation, overlay, adapter, output,
-                            generation_auth_key=key,
                         )
 
 

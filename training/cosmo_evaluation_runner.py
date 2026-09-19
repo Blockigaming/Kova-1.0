@@ -21,10 +21,11 @@ from training.cosmo_artifacts import ArtifactError, verify_snapshot
 from training.cosmo_generation_attestation import (
     AttestationError,
     create_attestation,
-    load_key as load_generation_auth_key,
+    load_signing_key,
     load_trust_policy as load_generation_trust_policy,
 )
 from training.cosmo_hardware import HardwareError, verify_nvidia_t4
+from training.cosmo_lifecycle_authority import acquire_phase_grant
 from training.cosmo_runtime_guard import require_ready
 from training.kova_cosmo_sft import (
     load_recipe,
@@ -38,7 +39,7 @@ SNAPSHOT_ENV = "KOVA_COSMO_VERIFIED_SNAPSHOT"
 ADAPTER_OUTPUT_ENV = "KOVA_COSMO_ADAPTER_OUTPUT"
 EVALUATION_OUTPUT_ENV = "KOVA_COSMO_EVALUATION_OUTPUT"
 SOURCE_COMMIT_ENV = "KOVA_SOURCE_COMMIT"
-GENERATION_AUTH_KEY_ENV = "KOVA_COSMO_EVALUATION_AUTH_KEY_FILE"
+GENERATION_SIGNING_KEY_ENV = "KOVA_COSMO_GENERATION_SIGNING_KEY_FILE"
 MAX_NEW_TOKENS = 256
 
 
@@ -81,7 +82,7 @@ def external_new(raw: object) -> Path:
     return resolved
 
 
-def authorize() -> tuple[dict, dict, Path, Path, Path, Path, bytes, dict]:
+def authorize() -> tuple[dict, dict, Path, Path, Path, object, dict, dict]:
     recipe = load_recipe()
     gates = recipe["account_gates"]
     permissions = recipe["execution"]
@@ -102,20 +103,20 @@ def authorize() -> tuple[dict, dict, Path, Path, Path, Path, bytes, dict]:
         raise EvaluationRunnerError("kova cosmo evaluation runner rejected") from None
     adapter_output = external_existing(os.environ.get(ADAPTER_OUTPUT_ENV))
     evaluation_output = external_new(os.environ.get(EVALUATION_OUTPUT_ENV))
-    generation_auth_key = Path(
-        os.environ.get(GENERATION_AUTH_KEY_ENV, "")
+    generation_signing_key_path = Path(
+        os.environ.get(GENERATION_SIGNING_KEY_ENV, "")
     )
     try:
         generation_trust = load_generation_trust_policy()
         need(generation_trust["status"] ==
-             "signing_key_pinned_for_guarded_runner")
-        generation_auth_key_bytes = load_generation_auth_key(
-            generation_auth_key,
-            expected_fingerprint=generation_trust[
-                "key_fingerprint_sha256"
-            ],
+             "runner_signing_public_key_pinned")
+        generation_signing_key = load_signing_key(
+            generation_signing_key_path,
+            expected_public_key_hex=generation_trust["public_key_hex"],
         )
-        generation_auth_key = generation_auth_key.resolve(strict=True)
+        generation_signing_key_path = generation_signing_key_path.resolve(
+            strict=True
+        )
     except AttestationError:
         raise EvaluationRunnerError(
             "kova cosmo evaluation runner rejected"
@@ -130,20 +131,37 @@ def authorize() -> tuple[dict, dict, Path, Path, Path, Path, bytes, dict]:
         )
     except ReceiptError:
         raise EvaluationRunnerError("kova cosmo evaluation runner rejected") from None
+    need(receipt["lifecycle_id"] == runtime["lifecycle_id"])
     need(snapshot != adapter_output)
     need(snapshot not in adapter_output.parents and
          adapter_output not in snapshot.parents)
     need(snapshot not in evaluation_output.parents)
     need(adapter_output not in evaluation_output.parents)
-    need(generation_auth_key != snapshot and
-         snapshot not in generation_auth_key.parents)
-    need(generation_auth_key != adapter_output and
-         adapter_output not in generation_auth_key.parents)
-    need(generation_auth_key != evaluation_output and
-         evaluation_output not in generation_auth_key.parents)
+    need(generation_signing_key_path != snapshot and
+         snapshot not in generation_signing_key_path.parents)
+    need(generation_signing_key_path != adapter_output and
+         adapter_output not in generation_signing_key_path.parents)
+    need(generation_signing_key_path != evaluation_output and
+         evaluation_output not in generation_signing_key_path.parents)
+    phase_grant = acquire_phase_grant(
+        phase="evaluation",
+        source_commit=source_commit,
+        runtime_evidence_sha256=runtime["runtime_evidence_sha256"],
+        lifecycle_id=runtime["lifecycle_id"],
+        preflight_ledger_sequence=runtime["preflight_ledger_sequence"],
+        runtime_deadline_utc=runtime["deadline_utc"],
+        context={
+            "operation": "three_way_guarded_generation",
+            "base_model": recipe["base_model"],
+            "base_revision": recipe["base_revision"],
+            "adapter_receipt_sha256": receipt["receipt_sha256"],
+            "evaluation_output": str(evaluation_output),
+            "expected_attempts": 36,
+        },
+    )
     return (
         recipe, runtime, snapshot, adapter_output, evaluation_output,
-        generation_auth_key, generation_auth_key_bytes, receipt,
+        generation_signing_key, receipt, phase_grant,
     )
 
 
@@ -200,7 +218,7 @@ def _append_attempt(stream, row: dict) -> None:
 
 def execute() -> dict:
     (recipe, runtime_guard, snapshot, adapter_output, output,
-     generation_auth_key, generation_auth_key_bytes, receipt) = authorize()
+     generation_signing_key, receipt, phase_grant) = authorize()
 
     # Heavy dependencies are imported only after every source/runtime guard and
     # both immutable artifact sets have been verified.
@@ -236,6 +254,12 @@ def execute() -> dict:
         "adapter_receipt_sha256": receipt["receipt_sha256"],
         "software_lock_sha256": software_lock_sha256,
         "runtime_evidence_sha256": runtime_guard["runtime_evidence_sha256"],
+        "lifecycle_id": phase_grant["lifecycle_id"],
+        "lifecycle_grant_id": phase_grant["grant_id"],
+        "lifecycle_ledger_commit_id": phase_grant["ledger_commit_id"],
+        "lifecycle_phase_grant_sha256": phase_grant[
+            "phase_grant_sha256"
+        ],
         "hardware": "eastus/Standard_NC4as_T4_v3/" + device_name,
         "precision": "fp16",
         "quantization": "none",
@@ -261,9 +285,15 @@ def execute() -> dict:
         "adapter_sha256": receipt["adapter_sha256"],
         "adapter_receipt_sha256": receipt["receipt_sha256"],
         "runtime_evidence_sha256": runtime_guard["runtime_evidence_sha256"],
-        "generation_auth_key_fingerprint_sha256": hashlib.sha256(
-            generation_auth_key_bytes
-        ).hexdigest(),
+        "lifecycle_id": phase_grant["lifecycle_id"],
+        "lifecycle_phase_grant_sha256": phase_grant[
+            "phase_grant_sha256"
+        ],
+        "lifecycle_ledger_sequence": phase_grant["ledger_sequence"],
+        "lifecycle_grant_id": phase_grant["grant_id"],
+        "lifecycle_ledger_commit_id": phase_grant["ledger_commit_id"],
+        "generation_signing_public_key_sha256":
+            load_generation_trust_policy()["public_key_sha256"],
         "expected_attempts": len(cases) * len(evaluation.VARIANTS),
         "automatic_release_allowed": False,
         "phase_b_ready": False,
@@ -346,12 +376,11 @@ def execute() -> dict:
                 _append_attempt(journal, row)
 
     bundle["runner_attestation"] = create_attestation(
-        bundle, generation_auth_key_bytes
+        bundle, generation_signing_key
     )
     _write_json_exclusive(output / "evaluation-bundle.v1.json", bundle)
     validated = evaluation.analyze(
         bundle, adapter_output=adapter_output,
-        generation_auth_key=generation_auth_key,
         require_complete=False,
     )
     successes = sum(row["outcome"] == "success" for row in bundle["attempts"])
@@ -387,10 +416,11 @@ def dry_run() -> dict:
             "runtime_compatibility_verified"
         ],
         "separate_paid_evaluation_confirmation_required": True,
-        "external_generation_auth_key_required": True,
-        "generation_signing_key_pinned": (
+        "external_runner_signing_private_key_required": True,
+        "verifier_private_key_access_allowed": False,
+        "generation_signing_public_key_pinned": (
             generation_trust["status"] ==
-            "signing_key_pinned_for_guarded_runner"
+            "runner_signing_public_key_pinned"
         ),
         "model_outputs_generated": False,
         "actual_model_outputs_evaluated": False,

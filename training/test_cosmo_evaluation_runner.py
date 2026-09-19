@@ -75,6 +75,10 @@ class CosmoEvaluationRunnerTests(unittest.TestCase):
             "adapter_receipt_sha256": "a" * 64,
             "software_lock_sha256": "b" * 64,
             "runtime_evidence_sha256": "c" * 64,
+            "lifecycle_id": "lifecycle-001",
+            "lifecycle_grant_id": "grant-evaluation-001",
+            "lifecycle_ledger_commit_id": "ledger-commit-003",
+            "lifecycle_phase_grant_sha256": "d" * 64,
             "hardware": "fixture",
             "precision": "fp16",
             "quantization": "none",
@@ -119,6 +123,75 @@ class CosmoEvaluationRunnerTests(unittest.TestCase):
         self.assertFalse(report["model_outputs_generated"])
         self.assertFalse(report["actual_model_outputs_evaluated"])
         self.assertFalse(report["phase_b_ready"])
+
+    def test_evaluation_reserves_remote_phase_before_heavy_imports(self):
+        recipe = deepcopy(runner.load_recipe())
+        recipe["account_gates"]["eastus_ncast4_quota_verified"] = True
+        recipe["account_gates"]["runtime_compatibility_verified"] = True
+        runtime = {
+            "runtime_evidence_sha256": "e" * 64,
+            "deadline_utc": "2026-09-19T19:10:00Z",
+            "lifecycle_id": "lifecycle-001",
+            "preflight_ledger_sequence": 1,
+        }
+        receipt = {
+            "source_commit": "a" * 40,
+            "receipt_sha256": "b" * 64,
+            "adapter_sha256": "c" * 64,
+            "lifecycle_id": "lifecycle-001",
+        }
+        grant = {
+            "lifecycle_id": "lifecycle-001",
+            "phase_grant_sha256": "d" * 64,
+            "ledger_sequence": 3,
+            "grant_id": "grant-evaluation-001",
+            "ledger_commit_id": "ledger-commit-003",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "snapshot"
+            adapter = root / "adapter"
+            output = root / "evaluation"
+            signing_key = root / "signing.key"
+            snapshot.mkdir()
+            adapter.mkdir()
+            signing_key.write_text("00" * 32, encoding="ascii")
+            signing_key.chmod(0o600)
+            environment = {
+                runner.CONFIRMATION_ENV: "YES",
+                runner.SNAPSHOT_ENV: str(snapshot),
+                runner.ADAPTER_OUTPUT_ENV: str(adapter),
+                runner.EVALUATION_OUTPUT_ENV: str(output),
+                runner.SOURCE_COMMIT_ENV: "a" * 40,
+                runner.GENERATION_SIGNING_KEY_ENV: str(signing_key),
+            }
+            with patch.object(runner, "load_recipe", return_value=recipe), \
+                 patch.dict(os.environ, environment, clear=True), \
+                 patch.object(runner, "require_ready", return_value=runtime), \
+                 patch.object(runner, "verify_installed_software"), \
+                 patch.object(runner, "verify_snapshot"), \
+                 patch.object(runner, "verify_source_checkout"), \
+                 patch.object(runner, "verify_receipt", return_value=receipt), \
+                 patch.object(
+                     runner, "load_generation_trust_policy",
+                     return_value={
+                         "status": "runner_signing_public_key_pinned",
+                         "public_key_hex": "1" * 64,
+                         "public_key_sha256": "2" * 64,
+                     },
+                 ), \
+                 patch.object(
+                     runner, "load_signing_key", return_value=object()
+                 ), \
+                 patch.object(
+                     runner, "acquire_phase_grant", return_value=grant
+                 ) as acquire:
+                authorized = runner.authorize()
+        self.assertEqual(authorized[-1], grant)
+        self.assertEqual(acquire.call_args.kwargs["phase"], "evaluation")
+        self.assertEqual(
+            acquire.call_args.kwargs["runtime_evidence_sha256"], "e" * 64
+        )
 
     def test_execute_cli_is_sanitized_and_nonzero_while_blocked(self):
         error = io.StringIO()

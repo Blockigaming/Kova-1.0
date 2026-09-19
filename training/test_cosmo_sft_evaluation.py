@@ -1,15 +1,19 @@
 """Synthetic evidence tests for the three-way Cosmo evaluation contract."""
 from copy import deepcopy
-import hashlib
+import inspect
 from pathlib import Path
 import socket
 import subprocess
-import tempfile
 import unittest
 from unittest.mock import patch
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+
 from training import cosmo_sft_evaluation as evaluation
-from training.cosmo_generation_attestation import create_attestation
+from training.cosmo_generation_attestation import (
+    create_attestation,
+    public_key_hex,
+)
 
 
 class CosmoSftEvaluationTests(unittest.TestCase):
@@ -17,21 +21,18 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         self.plan, self.cases, self.plan_sha256 = evaluation.load_plan()
         self.adapter_sha256 = "a" * 64
         self.adapter_receipt_sha256 = "d" * 64
-        temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(temporary.cleanup)
-        self.auth_key = Path(temporary.name) / "generation-auth.key"
-        self.auth_key_bytes = b"k" * 32
-        self.auth_key.write_text(self.auth_key_bytes.hex(), encoding="ascii")
-        self.auth_key.chmod(0o600)
+        self.signing_key = Ed25519PrivateKey.from_private_bytes(b"k" * 32)
+        self.public_key_hex = public_key_hex(self.signing_key)
         trust = {
             "schema_version": 1,
-            "status": "signing_key_pinned_for_guarded_runner",
-            "algorithm": "hmac-sha256",
-            "key_fingerprint_sha256": hashlib.sha256(
-                self.auth_key_bytes
-            ).hexdigest(),
-            "external_secret_required": True,
-            "checked_in_secret_allowed": False,
+            "status": "runner_signing_public_key_pinned",
+            "algorithm": "ed25519",
+            "public_key_hex": self.public_key_hex,
+            "public_key_sha256": "unused-by-mocked-loader",
+            "runner_private_key_environment_variable":
+                "KOVA_COSMO_GENERATION_SIGNING_KEY_FILE",
+            "verifier_private_key_access_allowed": False,
+            "checked_in_private_key_allowed": False,
         }
         trust_patch = patch.object(
             evaluation, "load_generation_trust_policy",
@@ -73,6 +74,10 @@ class CosmoSftEvaluationTests(unittest.TestCase):
                 "adapter_receipt_sha256": self.adapter_receipt_sha256,
                 "software_lock_sha256": "c" * 64,
                 "runtime_evidence_sha256": "e" * 64,
+                "lifecycle_id": "lifecycle-001",
+                "lifecycle_grant_id": "grant-evaluation-001",
+                "lifecycle_ledger_commit_id": "ledger-commit-003",
+                "lifecycle_phase_grant_sha256": "f" * 64,
                 "hardware": "synthetic-no-gpu-fixture",
                 "precision": "float32-fixture",
                 "quantization": "none",
@@ -96,7 +101,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
                     for dimension in evaluation.DIMENSIONS
                 }
             value["runner_attestation"] = create_attestation(
-                value, self.auth_key_bytes
+                value, self.signing_key
             )
         return value
 
@@ -137,12 +142,12 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         receipt = {
             "adapter_sha256": self.adapter_sha256,
             "receipt_sha256": self.adapter_receipt_sha256,
+            "lifecycle_id": "lifecycle-001",
         }
         with patch.object(evaluation, "verify_adapter_receipt", return_value=receipt) as verify:
             result = evaluation.analyze(
                 bundle, require_complete=False,
                 adapter_output=Path("/external/adapter-run"),
-                generation_auth_key=self.auth_key,
             )
         verify.assert_called_once_with(
             Path("/external/adapter-run"),
@@ -162,7 +167,6 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             evaluation.analyze(
                 bundle, require_complete=True,
                 adapter_output=Path("/external/adapter-run"),
-                generation_auth_key=self.auth_key,
             )
 
     def test_in_place_human_scores_cannot_bypass_review_finalization(self):
@@ -170,12 +174,13 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         receipt = {
             "adapter_sha256": self.adapter_sha256,
             "receipt_sha256": self.adapter_receipt_sha256,
+            "lifecycle_id": "lifecycle-001",
         }
         for row in bundle["attempts"]:
             row["scores"] = {
                 dimension: "pass" for dimension in evaluation.DIMENSIONS
             }
-        # Scores are deliberately excluded from the runner MAC, so the
+        # Scores are deliberately excluded from the runner signature, so the
         # attestation remains valid.  The evaluation entrypoint must still
         # reject this and require the separate hash-bound review receipt.
         with patch.object(
@@ -184,7 +189,6 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             evaluation.analyze(
                 bundle, require_complete=True,
                 adapter_output=Path("/external/adapter-run"),
-                generation_auth_key=self.auth_key,
             )
 
     def test_measured_bundle_requires_matching_verified_adapter_receipt(self):
@@ -196,6 +200,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             verified = {
                 "adapter_sha256": self.adapter_sha256,
                 "receipt_sha256": self.adapter_receipt_sha256,
+                "lifecycle_id": "lifecycle-001",
             }
             verified[field] = wrong
             with self.subTest(field=field), patch.object(
@@ -203,13 +208,13 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             ), self.assertRaises(evaluation.EvaluationError):
                 evaluation.analyze(
                     bundle, adapter_output=Path("/external/adapter-run"),
-                    generation_auth_key=self.auth_key,
                 )
 
     def test_measured_bundle_rejects_hand_authored_or_tampered_answers(self):
         receipt = {
             "adapter_sha256": self.adapter_sha256,
             "receipt_sha256": self.adapter_receipt_sha256,
+            "lifecycle_id": "lifecycle-001",
         }
         hand_authored = self.complete_bundle("measured")
         hand_authored["runner_attestation"] = None
@@ -218,7 +223,6 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         ), self.assertRaises(evaluation.EvaluationError):
             evaluation.analyze(
                 hand_authored, adapter_output=Path("/external/adapter-run"),
-                generation_auth_key=self.auth_key,
             )
 
         tampered = self.complete_bundle("measured")
@@ -231,39 +235,51 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         ), self.assertRaises(evaluation.EvaluationError):
             evaluation.analyze(
                 tampered, adapter_output=Path("/external/adapter-run"),
-                generation_auth_key=self.auth_key,
             )
 
     def test_measured_bundle_rejects_wrong_independent_verification_key(self):
-        wrong = self.auth_key.parent / "wrong.key"
-        wrong.write_text((b"w" * 32).hex(), encoding="ascii")
-        wrong.chmod(0o600)
         bundle = self.complete_bundle("measured")
         receipt = {
             "adapter_sha256": self.adapter_sha256,
             "receipt_sha256": self.adapter_receipt_sha256,
+            "lifecycle_id": "lifecycle-001",
         }
+        wrong_trust = dict(evaluation.load_generation_trust_policy())
+        wrong_trust["public_key_hex"] = public_key_hex(
+            Ed25519PrivateKey.from_private_bytes(b"w" * 32)
+        )
         with patch.object(
+            evaluation, "load_generation_trust_policy",
+            return_value=wrong_trust,
+        ), patch.object(
             evaluation, "verify_adapter_receipt", return_value=receipt
         ), self.assertRaises(evaluation.EvaluationError):
             evaluation.analyze(
                 bundle, adapter_output=Path("/external/adapter-run"),
-                generation_auth_key=wrong,
             )
+
+    def test_verifier_api_has_no_private_key_parameter(self):
+        self.assertNotIn(
+            "generation_auth_key", inspect.signature(evaluation.analyze).parameters
+        )
 
     def test_measured_bundle_rejects_unpinned_source_trust_policy(self):
         bundle = self.complete_bundle("measured")
         receipt = {
             "adapter_sha256": self.adapter_sha256,
             "receipt_sha256": self.adapter_receipt_sha256,
+            "lifecycle_id": "lifecycle-001",
         }
         unpinned = {
             "schema_version": 1,
-            "status": "signing_key_provisioning_required",
-            "algorithm": "hmac-sha256",
-            "key_fingerprint_sha256": None,
-            "external_secret_required": True,
-            "checked_in_secret_allowed": False,
+            "status": "signing_public_key_provisioning_required",
+            "algorithm": "ed25519",
+            "public_key_hex": None,
+            "public_key_sha256": None,
+            "runner_private_key_environment_variable":
+                "KOVA_COSMO_GENERATION_SIGNING_KEY_FILE",
+            "verifier_private_key_access_allowed": False,
+            "checked_in_private_key_allowed": False,
         }
         with patch.object(
             evaluation, "load_generation_trust_policy",
@@ -273,7 +289,6 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         ), self.assertRaises(evaluation.EvaluationError):
             evaluation.analyze(
                 bundle, adapter_output=Path("/external/adapter-run"),
-                generation_auth_key=self.auth_key,
             )
 
     def test_missing_failed_or_pending_attempt_blocks_completion(self):
@@ -328,6 +343,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             ("adapter_receipt_sha256", "e" * 64),
             ("software_lock_sha256", "d" * 64),
             ("runtime_evidence_sha256", "f" * 64),
+            ("lifecycle_phase_grant_sha256", "0" * 64),
             ("hardware", "different-hardware"),
             ("precision", "different-precision"),
             ("quantization", "different-quantization"),
