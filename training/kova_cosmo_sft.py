@@ -18,6 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config/kova-cosmo-sft.v1.json"
 
 EXPECTED_SOFTWARE = {
+    "python": "3.12",
+    "torch": "2.8.0",
     "transformers": "5.17.0",
     "peft": "0.21.0",
     "trl": "1.13.0",

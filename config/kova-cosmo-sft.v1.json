@@ -16,6 +16,8 @@
     "quantized_base": false
   },
   "software": {
+    "python": "3.12",
+    "torch": "2.8.0",
     "transformers": "5.17.0",
     "peft": "0.21.0",
     "trl": "1.13.0",

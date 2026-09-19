@@ -23,6 +23,8 @@ class KovaCosmoSftTests(unittest.TestCase):
 
     def test_current_package_versions_are_exact(self):
         self.assertEqual(recipe.load_recipe()["software"], {
+            "python": "3.12",
+            "torch": "2.8.0",
             "transformers": "5.17.0",
             "peft": "0.21.0",
             "trl": "1.13.0",
