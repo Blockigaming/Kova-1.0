@@ -5,12 +5,90 @@ import io
 import json
 from pathlib import Path
 import unittest
+import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from training import kova_cosmo_sft as recipe
+from training import identity_pilot as pilot
 
 
 class KovaCosmoSftTests(unittest.TestCase):
+    def test_installed_versions_must_match_every_recipe_pin(self):
+        with patch.object(recipe, "version", side_effect=recipe.EXPECTED_SOFTWARE.__getitem__):
+            recipe.verify_installed_software()
+
+    def test_each_missing_training_dependency_is_rejected(self):
+        for missing in recipe.EXPECTED_SOFTWARE:
+            if missing == "python":
+                continue
+            def installed(package):
+                if package == missing:
+                    raise recipe.PackageNotFoundError(package)
+                return recipe.EXPECTED_SOFTWARE[package]
+            with self.subTest(package=missing), patch.object(recipe, "version", side_effect=installed):
+                with self.assertRaises(recipe.RecipeError):
+                    recipe.verify_installed_software()
+
+    def test_each_drifted_training_dependency_is_rejected(self):
+        for drifted in recipe.EXPECTED_SOFTWARE:
+            if drifted == "python":
+                continue
+            def installed(package):
+                return "0.0.0" if package == drifted else recipe.EXPECTED_SOFTWARE[package]
+            with self.subTest(package=drifted), patch.object(recipe, "version", side_effect=installed):
+                with self.assertRaises(recipe.RecipeError):
+                    recipe.verify_installed_software()
+
+    def test_interpreter_is_checked_separately_from_distributions(self):
+        def installed(package):
+            self.assertNotEqual(package, "python")
+            return recipe.EXPECTED_SOFTWARE[package]
+        with patch.object(recipe, "version", side_effect=installed):
+            recipe.verify_installed_software()
+            with patch.object(recipe.sys, "version_info", SimpleNamespace(major=3, minor=11)):
+                with self.assertRaises(recipe.RecipeError):
+                    recipe.verify_installed_software()
+
+    def test_blocked_execution_does_not_probe_installed_packages(self):
+        with patch.object(recipe, "version", side_effect=AssertionError("premature probe")):
+            with self.assertRaises(recipe.RecipeError):
+                recipe.execute()
+
+    def test_sft_rows_match_compiled_messages_for_every_example(self):
+        train, validation = recipe.prepare_sft_rows()
+        self.assertEqual((len(train), len(validation)), (24, 12))
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "compiled"
+            pilot.prepare(output=output)
+            for split, records in (("train", train), ("validation", validation)):
+                compiled = [json.loads(line)["messages"] for line in
+                            (output / (split + ".jsonl")).read_text().splitlines()]
+                self.assertEqual([row["prompt"] + row["completion"]
+                                  for row in records], compiled)
+                for row in records:
+                    self.assertEqual([m["role"] for m in row["prompt"]],
+                                     ["system", "user"])
+                    self.assertEqual([m["role"] for m in row["completion"]],
+                                     ["assistant"])
+
+    def test_provenance_evaluation_receives_its_hypothetical_evidence(self):
+        train, validation = recipe.prepare_sft_rows()
+        fixture = validation[10]
+        system = fixture["prompt"][0]["content"]
+        self.assertIn("Offline evaluation fixture only", system)
+        self.assertIn("Qwen/Qwen3-0.6B", system)
+        self.assertIn(recipe.load_recipe()["base_revision"], system)
+        _, ordinary_prompt, _ = pilot.load()
+        for row in train + validation[:10] + validation[11:]:
+            self.assertEqual(row["prompt"][0]["content"], ordinary_prompt)
+
+    def test_row_preparation_needs_no_training_dependencies(self):
+        with patch.dict("sys.modules", {"torch": None, "datasets": None,
+                                       "peft": None, "trl": None}):
+            train, validation = recipe.prepare_sft_rows()
+        self.assertEqual((len(train), len(validation)), (24, 12))
+
     def test_dry_run_is_nonexecuting_and_pinned(self):
         report = recipe.dry_run()
         self.assertEqual(report["display_name"], "Kova Cosmo")

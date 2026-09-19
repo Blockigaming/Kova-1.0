@@ -10,9 +10,11 @@ import json
 import os
 from pathlib import Path
 import sys
+from importlib.metadata import PackageNotFoundError, version
 
 from release.model_revisions import MODEL_SOURCE_REFERENCES
 from training.identity_pilot import load as load_identity_pilot
+from training.identity_pilot import format_messages
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config/kova-cosmo-sft.v1.json"
@@ -140,6 +142,30 @@ def dry_run() -> dict:
     }
 
 
+def prepare_sft_rows() -> tuple[list[dict], list[dict]]:
+    """Build prompt/completion rows offline from the validated pilot corpus."""
+    _, prompt, rows = load_identity_pilot()
+    train_rows, eval_rows = [], []
+    for row in rows:
+        messages = format_messages(prompt, row)
+        target = train_rows if row["split"] == "train" else eval_rows
+        target.append({"prompt": messages[:-1], "completion": messages[-1:]})
+    return train_rows, eval_rows
+
+
+def verify_installed_software() -> None:
+    """Reject missing or drifted recipe dependencies without importing them."""
+    for package, expected in EXPECTED_SOFTWARE.items():
+        if package == "python":
+            need(f"{sys.version_info.major}.{sys.version_info.minor}" == expected)
+            continue
+        try:
+            installed = version(package)
+        except PackageNotFoundError:
+            raise RecipeError("kova cosmo sft recipe rejected") from None
+        need(installed == expected)
+
+
 def execute() -> None:
     value = load_recipe()
     # Source control plus an operator acknowledgement are both required. The
@@ -151,6 +177,7 @@ def execute() -> None:
     need(value["execution"]["training_authorized"] is True)
     need(value["execution"]["deployment_authorized"] is False)
     need(os.environ.get("KOVA_CONFIRM_PAID_TRAINING") == "YES")
+    verify_installed_software()
 
     # Heavy dependencies are imported only after every account/source guard.
     import torch
@@ -161,17 +188,7 @@ def execute() -> None:
     need(torch.cuda.is_available())
     need(torch.cuda.get_device_capability(0)[0:2] == (7, 5))
 
-    _, prompt, rows = load_identity_pilot()
-    train_rows, eval_rows = [], []
-    for row in rows:
-        target = train_rows if row["split"] == "train" else eval_rows
-        target.append({
-            "prompt": [
-                {"role": "system", "content": prompt},
-                row["messages"][0],
-            ],
-            "completion": [row["messages"][1]],
-        })
+    train_rows, eval_rows = prepare_sft_rows()
 
     lora = value["lora"]
     training = value["training"]
