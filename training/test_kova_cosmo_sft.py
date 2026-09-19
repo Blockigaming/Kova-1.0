@@ -5,12 +5,48 @@ import io
 import json
 from pathlib import Path
 import unittest
+import tempfile
 from unittest.mock import patch
 
 from training import kova_cosmo_sft as recipe
+from training import identity_pilot as pilot
 
 
 class KovaCosmoSftTests(unittest.TestCase):
+    def test_sft_rows_match_compiled_messages_for_every_example(self):
+        train, validation = recipe.prepare_sft_rows()
+        self.assertEqual((len(train), len(validation)), (24, 12))
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "compiled"
+            pilot.prepare(output=output)
+            for split, records in (("train", train), ("validation", validation)):
+                compiled = [json.loads(line)["messages"] for line in
+                            (output / (split + ".jsonl")).read_text().splitlines()]
+                self.assertEqual([row["prompt"] + row["completion"]
+                                  for row in records], compiled)
+                for row in records:
+                    self.assertEqual([m["role"] for m in row["prompt"]],
+                                     ["system", "user"])
+                    self.assertEqual([m["role"] for m in row["completion"]],
+                                     ["assistant"])
+
+    def test_provenance_evaluation_receives_its_hypothetical_evidence(self):
+        train, validation = recipe.prepare_sft_rows()
+        fixture = validation[10]
+        system = fixture["prompt"][0]["content"]
+        self.assertIn("Offline evaluation fixture only", system)
+        self.assertIn("Qwen/Qwen3-0.6B", system)
+        self.assertIn(recipe.load_recipe()["base_revision"], system)
+        _, ordinary_prompt, _ = pilot.load()
+        for row in train + validation[:10] + validation[11:]:
+            self.assertEqual(row["prompt"][0]["content"], ordinary_prompt)
+
+    def test_row_preparation_needs_no_training_dependencies(self):
+        with patch.dict("sys.modules", {"torch": None, "datasets": None,
+                                       "peft": None, "trl": None}):
+            train, validation = recipe.prepare_sft_rows()
+        self.assertEqual((len(train), len(validation)), (24, 12))
+
     def test_dry_run_is_nonexecuting_and_pinned(self):
         report = recipe.dry_run()
         self.assertEqual(report["display_name"], "Kova Cosmo")

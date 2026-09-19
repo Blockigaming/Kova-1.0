@@ -13,6 +13,7 @@ import sys
 
 from release.model_revisions import MODEL_SOURCE_REFERENCES
 from training.identity_pilot import load as load_identity_pilot
+from training.identity_pilot import format_messages
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config/kova-cosmo-sft.v1.json"
@@ -138,6 +139,17 @@ def dry_run() -> dict:
     }
 
 
+def prepare_sft_rows() -> tuple[list[dict], list[dict]]:
+    """Build prompt/completion rows offline from the validated pilot corpus."""
+    _, prompt, rows = load_identity_pilot()
+    train_rows, eval_rows = [], []
+    for row in rows:
+        messages = format_messages(prompt, row)
+        target = train_rows if row["split"] == "train" else eval_rows
+        target.append({"prompt": messages[:-1], "completion": messages[-1:]})
+    return train_rows, eval_rows
+
+
 def execute() -> None:
     value = load_recipe()
     # Source control plus an operator acknowledgement are both required. The
@@ -159,17 +171,7 @@ def execute() -> None:
     need(torch.cuda.is_available())
     need(torch.cuda.get_device_capability(0)[0:2] == (7, 5))
 
-    _, prompt, rows = load_identity_pilot()
-    train_rows, eval_rows = [], []
-    for row in rows:
-        target = train_rows if row["split"] == "train" else eval_rows
-        target.append({
-            "prompt": [
-                {"role": "system", "content": prompt},
-                row["messages"][0],
-            ],
-            "completion": [row["messages"][1]],
-        })
+    train_rows, eval_rows = prepare_sft_rows()
 
     lora = value["lora"]
     training = value["training"]
