@@ -100,3 +100,25 @@ is not proof that a fine-tune ran successfully or that its general quality impro
 The license permits modifications under its terms and imposes notice conditions
 on redistribution. It does not require a supplier name in every ordinary answer.
 The fine-tuning method changes trainable parameters; this starter has not done so.
+
+## Dependency inspection — September 19, 2026
+
+Inspected the published wheels for TRL 1.13.0, Transformers 5.17.0,
+PEFT 0.21.0, Accelerate 1.15.0 and Datasets 5.0.1 without installing
+the training stack or downloading weights. TRL's SFTTrainer source accepts
+conversational prompt/completion records and forwards model_init_kwargs.revision
+to its automatic processing-class loader. This is source inspection, not proof
+of working token masks or GPU execution.
+
+The guarded execute path now checks installed distribution versions against
+all five recipe pins after authorization checks and before heavy imports.
+Missing or mismatched packages reject execution. This metadata check cannot
+prove wheel integrity, transitive compatibility or CUDA support.
+
+Remaining checks: pin PyTorch/CUDA and transitive dependencies with hashes;
+inspect the exact tokenizer/template; exercise token masks and truncation on
+all 36 examples; verify LoRA module matching, FP16 GPU behavior, save/reload
+and baseline comparison. No dependency lock or real training readiness is
+claimed by this inspection. Human data review remains pending.
+
+Reference: https://huggingface.co/docs/trl/sft_trainer
