@@ -164,11 +164,16 @@ records to three conditions: untouched base, base plus the reviewed Kova system
 prompt, and the eventual trained adapter plus that prompt. The provider-free
 validator requires the same base revision, software lock, hardware, precision
 and quantization across conditions; only the trained condition may carry the
-single adapter digest. It rejects missing, failed, duplicated, relabeled or
-hash-mismatched attempts and incomplete scores.
+single adapter digest. Every condition binds the same adapter-receipt digest.
+Measured evidence is rejected unless the local receipt verifies against the
+declared source commit and both receipt and adapter digests match the bundle.
+It rejects missing, failed, duplicated, relabeled or hash-mismatched attempts
+and incomplete scores.
 
 The contract records identity, instruction adherence, factuality, formatting,
-general quality and safety/truthfulness separately. A complete measured bundle
+general quality and safety/truthfulness separately. Their exact pass/fail
+criteria are defined by the evaluation plan's hash-locked rubric, and the
+score-only human overlay must declare that same rubric digest. A complete measured bundle
 still cannot authorize release, establish the reviewer's identity, mark Phase B
 ready or close a checklist item. No result bundle exists yet, so no real model
 quality comparison is claimed by this source plan.
