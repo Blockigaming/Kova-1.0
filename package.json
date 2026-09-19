@@ -31,6 +31,7 @@
     "validate:current-product-policy": "python3 -m release.current_product_policy",
     "validate:identity-pilot": "python3 -m training.identity_pilot",
     "validate:cosmo-sft": "python3 -m training.kova_cosmo_sft",
-    "validate:cosmo-sft-api": "python3 -m training.validate_kova_cosmo_sft_api"
+    "validate:cosmo-sft-api": "python3 -m training.validate_kova_cosmo_sft_api",
+    "validate:cosmo-peft-cpu": "python3 -m training.validate_kova_cosmo_peft_cpu"
   }
 }
