@@ -123,6 +123,9 @@ class CosmoEvaluationReviewTests(unittest.TestCase):
             )
             adapter = root / "adapter-run"
             adapter.mkdir()
+            generation_auth_key = root / "generation-auth.key"
+            generation_auth_key.write_text("ab" * 32, encoding="ascii")
+            generation_auth_key.chmod(0o600)
             output = root / "reviewed"
             analyses = [
                 {"comparison_complete": False},
@@ -130,7 +133,8 @@ class CosmoEvaluationReviewTests(unittest.TestCase):
             ]
             with patch.object(review.evaluation, "analyze", side_effect=analyses):
                 report = review.finalize(
-                    generation, overlay, adapter, output
+                    generation, overlay, adapter, output,
+                    generation_auth_key=generation_auth_key,
                 )
             self.assertTrue(
                 (output / "reviewed-evaluation-bundle.v1.json").is_file()

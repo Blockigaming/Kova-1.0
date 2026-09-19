@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "status": "signing_key_provisioning_required",
+  "algorithm": "hmac-sha256",
+  "key_fingerprint_sha256": null,
+  "external_secret_required": true,
+  "checked_in_secret_allowed": false
+}

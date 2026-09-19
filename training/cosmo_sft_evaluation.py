@@ -11,6 +11,11 @@ import sys
 
 from training import identity_pilot as pilot
 from training.cosmo_adapter_receipt import ReceiptError, verify_receipt as verify_adapter_receipt
+from training.cosmo_generation_attestation import (
+    AttestationError,
+    load_trust_policy as load_generation_trust_policy,
+    verify_attestation as verify_runner_attestation,
+)
 from training.kova_cosmo_sft import load_recipe
 
 PLAN_PATH = "config/kova-cosmo-evaluation-plan.v1.json"
@@ -146,12 +151,14 @@ def load_plan(root: Path = pilot.ROOT) -> tuple[dict, dict[str, dict], str]:
 
 def analyze(bundle: dict, *, root: Path = pilot.ROOT,
             require_complete: bool = False,
-            adapter_output: Path | None = None) -> dict:
+            adapter_output: Path | None = None,
+            generation_auth_key: Path | None = None) -> dict:
     plan, cases, plan_sha256 = load_plan(root)
     recipe = load_recipe(root)
     need(type(bundle) is dict and list(bundle) == [
         "schema_version", "kind", "plan_sha256", "source_commit",
-        "adapter_sha256", "adapter_receipt_sha256", "attempts",
+        "adapter_sha256", "adapter_receipt_sha256", "runner_attestation",
+        "attempts",
     ])
     need(bundle["schema_version"] == 1)
     need(bundle["kind"] in ("synthetic_fixture", "measured"))
@@ -166,18 +173,32 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
 
     if bundle["kind"] == "measured":
         need(adapter_output is not None and adapter_output.is_absolute())
+        need(generation_auth_key is not None and
+             generation_auth_key.is_absolute())
         try:
+            trust = load_generation_trust_policy(root)
+            need(trust["status"] ==
+                 "signing_key_pinned_for_guarded_runner")
             receipt = verify_adapter_receipt(
                 adapter_output,
                 expected_source_commit=bundle["source_commit"],
                 root=root,
             )
-        except ReceiptError:
+            attestation = verify_runner_attestation(
+                bundle, generation_auth_key,
+                expected_key_fingerprint=trust[
+                    "key_fingerprint_sha256"
+                ],
+                repository_root=root,
+            )
+        except (ReceiptError, AttestationError, EvaluationError):
             raise EvaluationError("cosmo evaluation evidence rejected") from None
         need(receipt["adapter_sha256"] == bundle["adapter_sha256"])
         need(receipt["receipt_sha256"] == bundle["adapter_receipt_sha256"])
     else:
-        need(adapter_output is None)
+        need(adapter_output is None and generation_auth_key is None)
+        need(bundle["runner_attestation"] is None)
+        attestation = None
 
     attempts = {}
     attempt_ids = set()
@@ -260,6 +281,10 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
         "prompt_sha256": plan["prompt_sha256"],
         "adapter_sha256": bundle["adapter_sha256"],
         "adapter_receipt_sha256": bundle["adapter_receipt_sha256"],
+        "runner_attestation_verified": attestation is not None,
+        "measurement_sha256": (
+            attestation["measurement_sha256"] if attestation else None
+        ),
         "expected_attempts": len(expected),
         "provided_attempts": len(attempts),
         "missing_attempts": len(missing),
@@ -281,15 +306,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--require-complete", action="store_true")
     parser.add_argument("--adapter-output", type=Path,
                         help="External adapter run directory required for measured evidence")
+    parser.add_argument("--generation-auth-key", type=Path,
+                        help="Protected external key for measured evidence")
     arguments = parser.parse_args(argv)
     try:
         if arguments.bundle is None:
             plan, cases, plan_sha256 = load_plan()
+            trust = load_generation_trust_policy()
             report = {
                 "status": plan["status"], "plan_sha256": plan_sha256,
                 "validation_cases": len(cases), "variants": len(VARIANTS),
                 "expected_attempts": len(cases) * len(VARIANTS),
                 "actual_model_outputs_evaluated": False,
+                "generation_signing_key_pinned": (
+                    trust["status"] ==
+                    "signing_key_pinned_for_guarded_runner"
+                ),
                 "phase_b_ready": False, "closed_checklist_ids": [],
             }
         else:
@@ -299,10 +331,11 @@ def main(argv: list[str] | None = None) -> int:
                 value,
                 require_complete=arguments.require_complete,
                 adapter_output=arguments.adapter_output,
+                generation_auth_key=arguments.generation_auth_key,
             )
         print(json.dumps(report, sort_keys=True))
-    except EvaluationError as error:
-        print(str(error), file=sys.stderr)
+    except (EvaluationError, AttestationError):
+        print("cosmo evaluation evidence rejected", file=sys.stderr)
         return 1
     return 0
 

@@ -51,11 +51,14 @@ class CosmoRuntimeProbeTests(unittest.TestCase):
         bodies["LICENSE"] = b"Apache License\nVersion 2.0, January 2004\n"
         for name, body in bodies.items():
             (directory / name).write_bytes(body)
-        expected = {
+        expected_hashes = {
             name: hashlib.sha256(bodies[name]).hexdigest()
             for name in probe.EXPECTED_SHA256
         }
-        return directory, expected
+        expected_bytes = {
+            name: len(bodies[name]) for name in probe.REQUIRED_ASSETS
+        }
+        return directory, expected_hashes, expected_bytes
 
     def test_current_probe_is_blocked_before_runtime_or_dependencies(self):
         with patch.object(probe, "require_ready",
@@ -103,25 +106,44 @@ class CosmoRuntimeProbeTests(unittest.TestCase):
             probe.target_inventory(FakeModel(missing="o_proj"))
 
     def test_snapshot_inventory_binds_weights_tokenizer_config_and_license(self):
-        directory, expected = self.snapshot()
-        with patch.object(artifacts, "EXPECTED_SHA256", expected):
+        directory, expected, sizes = self.snapshot()
+        with patch.object(artifacts, "EXPECTED_SHA256", expected), \
+             patch.object(artifacts, "EXPECTED_BYTES", sizes):
             inventory = probe.verify_snapshot(directory)
         self.assertEqual(set(inventory), set(probe.REQUIRED_ASSETS))
         self.assertEqual(inventory["model.safetensors"]["sha256"],
                          expected["model.safetensors"])
 
-    def test_snapshot_rejects_hash_architecture_and_license_drift(self):
-        for name, body in (
-            ("model.safetensors", b"changed"),
-            ("config.json", b"{}"),
-            ("LICENSE", b"different license"),
-        ):
+    def test_every_snapshot_asset_is_hash_and_size_pinned(self):
+        self.assertEqual(set(artifacts.REQUIRED_ASSETS),
+                         set(artifacts.EXPECTED_SHA256))
+        self.assertEqual(set(artifacts.REQUIRED_ASSETS),
+                         set(artifacts.EXPECTED_BYTES))
+        self.assertEqual(artifacts.DOWNLOAD_MANIFEST["model"],
+                         "Qwen/Qwen3-0.6B")
+        self.assertEqual(artifacts.DOWNLOAD_MANIFEST["revision"],
+                         "c1899de289a04d12100db370d81485cdf75e47ca")
+
+    def test_snapshot_rejects_drift_in_each_runtime_asset(self):
+        for name in probe.REQUIRED_ASSETS:
             with self.subTest(name=name):
-                directory, expected = self.snapshot()
-                (directory / name).write_bytes(body)
-                with patch.object(artifacts, "EXPECTED_SHA256", expected):
+                directory, expected, sizes = self.snapshot()
+                body = (directory / name).read_bytes()
+                (directory / name).write_bytes(body[:-1] + bytes([body[-1] ^ 1]))
+                with patch.object(artifacts, "EXPECTED_SHA256", expected), \
+                     patch.object(artifacts, "EXPECTED_BYTES", sizes):
                     with self.assertRaises(probe.ArtifactError):
                         probe.verify_snapshot(directory)
+
+    def test_snapshot_rejects_unpinned_top_level_asset(self):
+        directory, expected, sizes = self.snapshot()
+        (directory / "special_tokens_map.json").write_text(
+            "{}", encoding="utf-8"
+        )
+        with patch.object(artifacts, "EXPECTED_SHA256", expected), \
+             patch.object(artifacts, "EXPECTED_BYTES", sizes), \
+             self.assertRaises(probe.ArtifactError):
+            probe.verify_snapshot(directory)
 
     def test_completion_mask_excludes_prompt_and_preserves_completion(self):
         row = {"prompt": [{"role": "user", "content": "x"}],

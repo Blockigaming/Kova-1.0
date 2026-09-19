@@ -1,12 +1,15 @@
 """Synthetic evidence tests for the three-way Cosmo evaluation contract."""
 from copy import deepcopy
+import hashlib
 from pathlib import Path
 import socket
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
 from training import cosmo_sft_evaluation as evaluation
+from training.cosmo_generation_attestation import create_attestation
 
 
 class CosmoSftEvaluationTests(unittest.TestCase):
@@ -14,6 +17,28 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         self.plan, self.cases, self.plan_sha256 = evaluation.load_plan()
         self.adapter_sha256 = "a" * 64
         self.adapter_receipt_sha256 = "d" * 64
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.auth_key = Path(temporary.name) / "generation-auth.key"
+        self.auth_key_bytes = b"k" * 32
+        self.auth_key.write_text(self.auth_key_bytes.hex(), encoding="ascii")
+        self.auth_key.chmod(0o600)
+        trust = {
+            "schema_version": 1,
+            "status": "signing_key_pinned_for_guarded_runner",
+            "algorithm": "hmac-sha256",
+            "key_fingerprint_sha256": hashlib.sha256(
+                self.auth_key_bytes
+            ).hexdigest(),
+            "external_secret_required": True,
+            "checked_in_secret_allowed": False,
+        }
+        trust_patch = patch.object(
+            evaluation, "load_generation_trust_policy",
+            return_value=trust,
+        )
+        trust_patch.start()
+        self.addCleanup(trust_patch.stop)
 
     def bundle(self, kind="synthetic_fixture"):
         return {
@@ -23,6 +48,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             "source_commit": "b" * 40,
             "adapter_sha256": self.adapter_sha256,
             "adapter_receipt_sha256": self.adapter_receipt_sha256,
+            "runner_attestation": None,
             "attempts": [],
         }
 
@@ -63,6 +89,10 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             for case_id in self.cases
             for variant in evaluation.VARIANTS
         ]
+        if kind == "measured":
+            value["runner_attestation"] = create_attestation(
+                value, self.auth_key_bytes
+            )
         return value
 
     def rejected(self, value):
@@ -107,6 +137,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             result = evaluation.analyze(
                 bundle, require_complete=True,
                 adapter_output=Path("/external/adapter-run"),
+                generation_auth_key=self.auth_key,
             )
         verify.assert_called_once_with(
             Path("/external/adapter-run"),
@@ -114,6 +145,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             root=evaluation.pilot.ROOT,
         )
         self.assertTrue(result["actual_model_outputs_evaluated"])
+        self.assertTrue(result["runner_attestation_verified"])
         self.assertFalse(result["human_reviewer_identity_verified"])
         self.assertFalse(result["automatic_release_allowed"])
         self.assertEqual(result["closed_checklist_ids"], [])
@@ -133,8 +165,79 @@ class CosmoSftEvaluationTests(unittest.TestCase):
                 evaluation, "verify_adapter_receipt", return_value=verified
             ), self.assertRaises(evaluation.EvaluationError):
                 evaluation.analyze(
-                    bundle, adapter_output=Path("/external/adapter-run")
+                    bundle, adapter_output=Path("/external/adapter-run"),
+                    generation_auth_key=self.auth_key,
                 )
+
+    def test_measured_bundle_rejects_hand_authored_or_tampered_answers(self):
+        receipt = {
+            "adapter_sha256": self.adapter_sha256,
+            "receipt_sha256": self.adapter_receipt_sha256,
+        }
+        hand_authored = self.complete_bundle("measured")
+        hand_authored["runner_attestation"] = None
+        with patch.object(
+            evaluation, "verify_adapter_receipt", return_value=receipt
+        ), self.assertRaises(evaluation.EvaluationError):
+            evaluation.analyze(
+                hand_authored, adapter_output=Path("/external/adapter-run"),
+                generation_auth_key=self.auth_key,
+            )
+
+        tampered = self.complete_bundle("measured")
+        tampered["attempts"][0]["answer"] = "hand-authored replacement"
+        tampered["attempts"][0]["answer_sha256"] = evaluation.answer_digest(
+            tampered["attempts"][0]["answer"]
+        )
+        with patch.object(
+            evaluation, "verify_adapter_receipt", return_value=receipt
+        ), self.assertRaises(evaluation.EvaluationError):
+            evaluation.analyze(
+                tampered, adapter_output=Path("/external/adapter-run"),
+                generation_auth_key=self.auth_key,
+            )
+
+    def test_measured_bundle_rejects_wrong_independent_verification_key(self):
+        wrong = self.auth_key.parent / "wrong.key"
+        wrong.write_text((b"w" * 32).hex(), encoding="ascii")
+        wrong.chmod(0o600)
+        bundle = self.complete_bundle("measured")
+        receipt = {
+            "adapter_sha256": self.adapter_sha256,
+            "receipt_sha256": self.adapter_receipt_sha256,
+        }
+        with patch.object(
+            evaluation, "verify_adapter_receipt", return_value=receipt
+        ), self.assertRaises(evaluation.EvaluationError):
+            evaluation.analyze(
+                bundle, adapter_output=Path("/external/adapter-run"),
+                generation_auth_key=wrong,
+            )
+
+    def test_measured_bundle_rejects_unpinned_source_trust_policy(self):
+        bundle = self.complete_bundle("measured")
+        receipt = {
+            "adapter_sha256": self.adapter_sha256,
+            "receipt_sha256": self.adapter_receipt_sha256,
+        }
+        unpinned = {
+            "schema_version": 1,
+            "status": "signing_key_provisioning_required",
+            "algorithm": "hmac-sha256",
+            "key_fingerprint_sha256": None,
+            "external_secret_required": True,
+            "checked_in_secret_allowed": False,
+        }
+        with patch.object(
+            evaluation, "load_generation_trust_policy",
+            return_value=unpinned,
+        ), patch.object(
+            evaluation, "verify_adapter_receipt", return_value=receipt
+        ), self.assertRaises(evaluation.EvaluationError):
+            evaluation.analyze(
+                bundle, adapter_output=Path("/external/adapter-run"),
+                generation_auth_key=self.auth_key,
+            )
 
     def test_missing_failed_or_pending_attempt_blocks_completion(self):
         values = []

@@ -86,8 +86,9 @@ def load_policy(root: Path = ROOT) -> dict:
         )
         need(type(value) is dict and list(value) == [
             "schema_version", "status", "model_slot", "base_model",
-            "base_revision", "azure", "pricing", "required_controls",
-            "owner_approvals", "runtime_evidence", "phase_b_ready",
+            "base_revision", "azure", "pilot", "pricing",
+            "required_controls", "owner_approvals", "runtime_evidence",
+            "phase_b_ready",
         ])
         reference = MODEL_SOURCE_REFERENCES["work-cosmo"]
         need(value["schema_version"] == 1)
@@ -98,6 +99,14 @@ def load_policy(root: Path = ROOT) -> dict:
             "region": "eastus",
             "vm_size": "Standard_NC4as_T4_v3",
             "required_family_quota_vcpus": 4,
+        })
+        need(value["pilot"] == {
+            "maximum_training_runs": 1,
+            "automatic_deallocation_required": True,
+            "automatic_cleanup_required": True,
+            "cleanup_scope": "pilot_resource_group",
+            "production_deployment_authorized": False,
+            "production_integration_authorized": False,
         })
 
         pricing = value["pricing"]
@@ -227,13 +236,22 @@ def assess_preflight(policy: dict, evidence: dict, *, now: datetime) -> dict:
     need(deadline <= now + timedelta(
         minutes=pricing["maximum_allocated_minutes"]
     ))
+    pilot = policy["pilot"]
     return {
         "status": "ready_for_single_bounded_pilot",
         "deadline_utc": evidence["control_plane_deallocation_deadline_utc"],
         "maximum_allocated_minutes": pricing["maximum_allocated_minutes"],
         "maximum_compute_cost_usd": pricing["maximum_compute_cost_usd"],
         "approved_all_in_budget_usd": pricing["approved_all_in_budget_usd"],
+        "maximum_training_runs": pilot["maximum_training_runs"],
+        "automatic_deallocation_required": pilot[
+            "automatic_deallocation_required"
+        ],
+        "automatic_cleanup_required": pilot[
+            "automatic_cleanup_required"
+        ],
         "deployment_authorized": False,
+        "production_integration_authorized": False,
         "phase_b_ready": False,
         "closed_checklist_ids": [],
     }
@@ -322,10 +340,8 @@ def verify_post_run(preflight: dict, post_run_path: Path,
             ])
             need(nonempty(item["resource_id"], 2048))
             need(nonempty(item["resource_type"]))
-            need(type(item["billable"]) is bool)
-            need(item["disposition"] in (
-                "deleted", "retained_within_approved_budget",
-            ))
+            need(item["billable"] is False)
+            need(item["disposition"] == "deleted")
             need(nonempty(item["evidence"], 2048))
         return {
             "status": "deallocation_verified",
@@ -342,6 +358,8 @@ def verify_post_run(preflight: dict, post_run_path: Path,
                 "all_in_cost_upper_bound_usd"
             ],
             "within_approved_budget": True,
+            "automatic_deallocation_verified": True,
+            "automatic_cleanup_verified": True,
             "post_run_evidence_sha256": hashlib.sha256(raw).hexdigest(),
             "residual_resource_count": len(resources),
             "billable_residual_resource_count": sum(
@@ -375,6 +393,15 @@ def dry_run(root: Path = ROOT) -> dict:
         "maximum_allocated_minutes": policy["pricing"][
             "maximum_allocated_minutes"
         ],
+        "maximum_training_runs": policy["pilot"]["maximum_training_runs"],
+        "automatic_deallocation_required": policy["pilot"][
+            "automatic_deallocation_required"
+        ],
+        "automatic_cleanup_required": policy["pilot"][
+            "automatic_cleanup_required"
+        ],
+        "deployment_authorized": False,
+        "production_integration_authorized": False,
         "resource_created": False,
         "spending_started": False,
         "phase_b_ready": False,

@@ -18,6 +18,13 @@ from training import cosmo_sft_evaluation as evaluation
 from training import identity_pilot as pilot
 from training.cosmo_adapter_receipt import ReceiptError, verify_receipt
 from training.cosmo_artifacts import ArtifactError, verify_snapshot
+from training.cosmo_generation_attestation import (
+    AttestationError,
+    create_attestation,
+    load_key as load_generation_auth_key,
+    load_trust_policy as load_generation_trust_policy,
+)
+from training.cosmo_hardware import HardwareError, verify_nvidia_t4
 from training.cosmo_runtime_guard import require_ready
 from training.kova_cosmo_sft import (
     load_recipe,
@@ -31,6 +38,7 @@ SNAPSHOT_ENV = "KOVA_COSMO_VERIFIED_SNAPSHOT"
 ADAPTER_OUTPUT_ENV = "KOVA_COSMO_ADAPTER_OUTPUT"
 EVALUATION_OUTPUT_ENV = "KOVA_COSMO_EVALUATION_OUTPUT"
 SOURCE_COMMIT_ENV = "KOVA_SOURCE_COMMIT"
+GENERATION_AUTH_KEY_ENV = "KOVA_COSMO_EVALUATION_AUTH_KEY_FILE"
 MAX_NEW_TOKENS = 256
 
 
@@ -73,7 +81,7 @@ def external_new(raw: object) -> Path:
     return resolved
 
 
-def authorize() -> tuple[dict, dict, Path, Path, Path, dict]:
+def authorize() -> tuple[dict, dict, Path, Path, Path, Path, bytes, dict]:
     recipe = load_recipe()
     gates = recipe["account_gates"]
     permissions = recipe["execution"]
@@ -94,6 +102,24 @@ def authorize() -> tuple[dict, dict, Path, Path, Path, dict]:
         raise EvaluationRunnerError("kova cosmo evaluation runner rejected") from None
     adapter_output = external_existing(os.environ.get(ADAPTER_OUTPUT_ENV))
     evaluation_output = external_new(os.environ.get(EVALUATION_OUTPUT_ENV))
+    generation_auth_key = Path(
+        os.environ.get(GENERATION_AUTH_KEY_ENV, "")
+    )
+    try:
+        generation_trust = load_generation_trust_policy()
+        need(generation_trust["status"] ==
+             "signing_key_pinned_for_guarded_runner")
+        generation_auth_key_bytes = load_generation_auth_key(
+            generation_auth_key,
+            expected_fingerprint=generation_trust[
+                "key_fingerprint_sha256"
+            ],
+        )
+        generation_auth_key = generation_auth_key.resolve(strict=True)
+    except AttestationError:
+        raise EvaluationRunnerError(
+            "kova cosmo evaluation runner rejected"
+        ) from None
     source_commit = os.environ.get(SOURCE_COMMIT_ENV)
     need(type(source_commit) is str and len(source_commit) == 40)
     need(all(character in "0123456789abcdef" for character in source_commit))
@@ -109,7 +135,16 @@ def authorize() -> tuple[dict, dict, Path, Path, Path, dict]:
          adapter_output not in snapshot.parents)
     need(snapshot not in evaluation_output.parents)
     need(adapter_output not in evaluation_output.parents)
-    return recipe, runtime, snapshot, adapter_output, evaluation_output, receipt
+    need(generation_auth_key != snapshot and
+         snapshot not in generation_auth_key.parents)
+    need(generation_auth_key != adapter_output and
+         adapter_output not in generation_auth_key.parents)
+    need(generation_auth_key != evaluation_output and
+         evaluation_output not in generation_auth_key.parents)
+    return (
+        recipe, runtime, snapshot, adapter_output, evaluation_output,
+        generation_auth_key, generation_auth_key_bytes, receipt,
+    )
 
 
 def messages_for_variant(case: dict, variant: str, prompt: str) -> list[dict]:
@@ -164,7 +199,8 @@ def _append_attempt(stream, row: dict) -> None:
 
 
 def execute() -> dict:
-    recipe, runtime_guard, snapshot, adapter_output, output, receipt = authorize()
+    (recipe, runtime_guard, snapshot, adapter_output, output,
+     generation_auth_key, generation_auth_key_bytes, receipt) = authorize()
 
     # Heavy dependencies are imported only after every source/runtime guard and
     # both immutable artifact sets have been verified.
@@ -172,10 +208,13 @@ def execute() -> dict:
     from peft import PeftModel
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    need(torch.cuda.is_available())
-    need(torch.cuda.get_device_capability(0)[0:2] == (7, 5))
-    device_name = torch.cuda.get_device_name(0)
-    need(type(device_name) is str and "T4" in device_name)
+    try:
+        device = verify_nvidia_t4(torch)
+    except HardwareError:
+        raise EvaluationRunnerError(
+            "kova cosmo evaluation runner rejected"
+        ) from None
+    device_name = device["device_name"]
     os.environ.update({
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -208,6 +247,7 @@ def execute() -> dict:
         "source_commit": receipt["source_commit"],
         "adapter_sha256": receipt["adapter_sha256"],
         "adapter_receipt_sha256": receipt["receipt_sha256"],
+        "runner_attestation": None,
         "attempts": [],
     }
 
@@ -221,6 +261,9 @@ def execute() -> dict:
         "adapter_sha256": receipt["adapter_sha256"],
         "adapter_receipt_sha256": receipt["receipt_sha256"],
         "runtime_evidence_sha256": runtime_guard["runtime_evidence_sha256"],
+        "generation_auth_key_fingerprint_sha256": hashlib.sha256(
+            generation_auth_key_bytes
+        ).hexdigest(),
         "expected_attempts": len(cases) * len(evaluation.VARIANTS),
         "automatic_release_allowed": False,
         "phase_b_ready": False,
@@ -302,9 +345,14 @@ def execute() -> dict:
                 bundle["attempts"].append(row)
                 _append_attempt(journal, row)
 
+    bundle["runner_attestation"] = create_attestation(
+        bundle, generation_auth_key_bytes
+    )
     _write_json_exclusive(output / "evaluation-bundle.v1.json", bundle)
     validated = evaluation.analyze(
-        bundle, adapter_output=adapter_output, require_complete=False
+        bundle, adapter_output=adapter_output,
+        generation_auth_key=generation_auth_key,
+        require_complete=False,
     )
     successes = sum(row["outcome"] == "success" for row in bundle["attempts"])
     return {
@@ -327,6 +375,7 @@ def execute() -> dict:
 def dry_run() -> dict:
     recipe = load_recipe()
     _, rubric_sha256 = evaluation.load_rubric()
+    generation_trust = load_generation_trust_policy()
     return {
         "status": "blocked",
         "expected_attempts": 36,
@@ -338,6 +387,11 @@ def dry_run() -> dict:
             "runtime_compatibility_verified"
         ],
         "separate_paid_evaluation_confirmation_required": True,
+        "external_generation_auth_key_required": True,
+        "generation_signing_key_pinned": (
+            generation_trust["status"] ==
+            "signing_key_pinned_for_guarded_runner"
+        ),
         "model_outputs_generated": False,
         "actual_model_outputs_evaluated": False,
         "deployment_authorized": False,

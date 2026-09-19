@@ -96,7 +96,7 @@ def _write(path: Path, value: object) -> bytes:
 
 
 def finalize(generation_path: Path, review_path: Path, adapter_output: Path,
-             output: Path) -> dict:
+             output: Path, *, generation_auth_key: Path) -> dict:
     try:
         generation_raw = read_raw(generation_path, MAX_BUNDLE_BYTES)
         review_raw = read_raw(review_path, MAX_REVIEW_BYTES)
@@ -106,14 +106,18 @@ def finalize(generation_path: Path, review_path: Path, adapter_output: Path,
         _, rubric_sha256 = evaluation.load_rubric()
         adapter = external_existing(str(adapter_output))
         original_report = evaluation.analyze(
-            bundle, adapter_output=adapter, require_complete=False
+            bundle, adapter_output=adapter,
+            generation_auth_key=generation_auth_key,
+            require_complete=False,
         )
         need(original_report["comparison_complete"] is False)
         scored = apply_scores(
             bundle, review, generation_sha256, rubric_sha256
         )
         report = evaluation.analyze(
-            scored, adapter_output=adapter, require_complete=True
+            scored, adapter_output=adapter,
+            generation_auth_key=generation_auth_key,
+            require_complete=True,
         )
         need(report["actual_model_outputs_evaluated"] is True)
         destination = external_new(str(output))
@@ -164,6 +168,7 @@ def dry_run() -> dict:
         "expected_attempts": 36,
         "score_dimensions": list(evaluation.DIMENSIONS),
         "rubric_sha256": rubric_sha256,
+        "external_generation_auth_key_required": True,
         "answer_editing_allowed": False,
         "human_reviewer_identity_verified": False,
         "automatic_release_allowed": False,
@@ -179,6 +184,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("review", nargs="?", type=Path)
     parser.add_argument("adapter_output", nargs="?", type=Path)
     parser.add_argument("output", nargs="?", type=Path)
+    parser.add_argument("--generation-auth-key", type=Path)
     arguments = parser.parse_args(argv)
     try:
         values = (arguments.generation, arguments.review,
@@ -187,7 +193,10 @@ def main(argv: list[str] | None = None) -> int:
             report = dry_run()
         else:
             need(all(value is not None for value in values))
-            report = finalize(*values)
+            need(arguments.generation_auth_key is not None)
+            report = finalize(
+                *values, generation_auth_key=arguments.generation_auth_key
+            )
         print(json.dumps(report, sort_keys=True))
         return 0
     except ReviewError as error:

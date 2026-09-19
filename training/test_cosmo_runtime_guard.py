@@ -69,6 +69,11 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
         report = guard.dry_run()
         self.assertEqual(report["approved_all_in_budget_usd"], "2.0000")
         self.assertEqual(report["maximum_allocated_minutes"], 60)
+        self.assertEqual(report["maximum_training_runs"], 1)
+        self.assertTrue(report["automatic_deallocation_required"])
+        self.assertTrue(report["automatic_cleanup_required"])
+        self.assertFalse(report["deployment_authorized"])
+        self.assertFalse(report["production_integration_authorized"])
         self.assertEqual(report["blockers"], [
             "resource_creation_release_withheld",
             "spending_release_withheld",
@@ -205,22 +210,33 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             "residual_resources": [{
                 "resource_id": "disk-1",
                 "resource_type": "managed_disk",
-                "billable": True,
-                "disposition": "retained_within_approved_budget",
-                "evidence": "cost bound checked",
+                "billable": False,
+                "disposition": "deleted",
+                "evidence": "deletion confirmed",
             }],
         }
         path = self.base / "post-run.json"
         path.write_text(json.dumps(post), encoding="utf-8")
         report = guard.verify_post_run(preflight, path)
         self.assertEqual(report["status"], "deallocation_verified")
-        self.assertEqual(report["billable_residual_resource_count"], 1)
+        self.assertEqual(report["billable_residual_resource_count"], 0)
+        self.assertTrue(report["automatic_deallocation_verified"])
+        self.assertTrue(report["automatic_cleanup_verified"])
         self.assertEqual(report["allocated_seconds"], 2400)
         self.assertEqual(report["all_in_cost_upper_bound_usd"], "0.4507")
         self.assertTrue(report["within_approved_budget"])
         self.assertEqual(report["post_run_evidence_sha256"],
                          hashlib.sha256(path.read_bytes()).hexdigest())
         post["power_state"] = "stopped"
+        path.write_text(json.dumps(post), encoding="utf-8")
+        with self.assertRaises(guard.RuntimeGuardError):
+            guard.verify_post_run(preflight, path)
+
+        post["power_state"] = "deallocated"
+        post["residual_resources"][0].update(
+            billable=True,
+            disposition="retained_within_approved_budget",
+        )
         path.write_text(json.dumps(post), encoding="utf-8")
         with self.assertRaises(guard.RuntimeGuardError):
             guard.verify_post_run(preflight, path)

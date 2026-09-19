@@ -18,6 +18,7 @@ from training.cosmo_artifacts import (
     REQUIRED_ASSETS,
     verify_snapshot,
 )
+from training.cosmo_hardware import HardwareError, verify_nvidia_t4
 from training.cosmo_runtime_guard import RuntimeGuardError, require_ready
 from training.kova_cosmo_sft import (
     EXPECTED_TARGETS,
@@ -98,8 +99,10 @@ def execute_probe() -> dict:
     from peft import LoraConfig, get_peft_model
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    need(torch.cuda.is_available())
-    need(torch.cuda.get_device_capability(0)[0:2] == (7, 5))
+    try:
+        device_identity = verify_nvidia_t4(torch)
+    except HardwareError:
+        raise RuntimeProbeError("kova cosmo runtime probe rejected") from None
     torch.manual_seed(value["training"]["seed"])
     torch.cuda.manual_seed_all(value["training"]["seed"])
     torch.cuda.reset_peak_memory_stats(0)
@@ -160,8 +163,9 @@ def execute_probe() -> dict:
         "status": "selected_checkpoint_gpu_compatibility_verified",
         "base_model": value["base_model"],
         "base_revision": value["base_revision"],
-        "device_name": torch.cuda.get_device_name(0),
-        "device_capability": list(torch.cuda.get_device_capability(0)),
+        "device_name": device_identity["device_name"],
+        "device_capability": device_identity["device_capability"],
+        "gpu_family": device_identity["gpu_family"],
         "precision": value["hardware"]["precision"],
         "asset_inventory": asset_inventory,
         "target_module_counts": targets,

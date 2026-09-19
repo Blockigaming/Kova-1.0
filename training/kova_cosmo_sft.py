@@ -16,6 +16,7 @@ from importlib.metadata import PackageNotFoundError, version
 from release.model_revisions import MODEL_SOURCE_REFERENCES
 from training.cosmo_adapter_receipt import ReceiptError, write_receipt
 from training.cosmo_artifacts import ArtifactError, verify_snapshot
+from training.cosmo_hardware import HardwareError, verify_nvidia_t4
 from training.cosmo_runtime_guard import require_ready as require_runtime_ready
 from training.identity_pilot import load as load_identity_pilot
 from training.identity_pilot import format_messages
@@ -261,8 +262,11 @@ def execute() -> dict:
     from peft import LoraConfig
     from trl import SFTConfig, SFTTrainer
 
-    need(torch.cuda.is_available())
-    need(torch.cuda.get_device_capability(0)[0:2] == (7, 5))
+    try:
+        device_identity = verify_nvidia_t4(torch)
+    except HardwareError:
+        raise RecipeError("kova cosmo sft recipe rejected") from None
+    need(device_identity["gpu_family"] == value["hardware"]["gpu_family"])
 
     train_rows, eval_rows = prepare_sft_rows()
 

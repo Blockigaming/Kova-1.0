@@ -9,6 +9,14 @@
     "vm_size": "Standard_NC4as_T4_v3",
     "required_family_quota_vcpus": 4
   },
+  "pilot": {
+    "maximum_training_runs": 1,
+    "automatic_deallocation_required": true,
+    "automatic_cleanup_required": true,
+    "cleanup_scope": "pilot_resource_group",
+    "production_deployment_authorized": false,
+    "production_integration_authorized": false
+  },
   "pricing": {
     "owner_verified_compute_usd_per_hour": "0.5260",
     "approved_all_in_budget_usd": "2.0000",
