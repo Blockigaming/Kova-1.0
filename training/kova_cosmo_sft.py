@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from importlib.metadata import PackageNotFoundError, version
 
 from release.model_revisions import MODEL_SOURCE_REFERENCES
 from training.identity_pilot import load as load_identity_pilot
@@ -150,6 +151,16 @@ def prepare_sft_rows() -> tuple[list[dict], list[dict]]:
     return train_rows, eval_rows
 
 
+def verify_installed_software() -> None:
+    """Reject missing or drifted recipe dependencies without importing them."""
+    for package, expected in EXPECTED_SOFTWARE.items():
+        try:
+            installed = version(package)
+        except PackageNotFoundError:
+            raise RecipeError("kova cosmo sft recipe rejected") from None
+        need(installed == expected)
+
+
 def execute() -> None:
     value = load_recipe()
     # Source control plus an operator acknowledgement are both required. The
@@ -161,6 +172,7 @@ def execute() -> None:
     need(value["execution"]["training_authorized"] is True)
     need(value["execution"]["deployment_authorized"] is False)
     need(os.environ.get("KOVA_CONFIRM_PAID_TRAINING") == "YES")
+    verify_installed_software()
 
     # Heavy dependencies are imported only after every account/source guard.
     import torch

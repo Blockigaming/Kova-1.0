@@ -13,6 +13,33 @@ from training import identity_pilot as pilot
 
 
 class KovaCosmoSftTests(unittest.TestCase):
+    def test_installed_versions_must_match_every_recipe_pin(self):
+        with patch.object(recipe, "version", side_effect=recipe.EXPECTED_SOFTWARE.__getitem__):
+            recipe.verify_installed_software()
+
+    def test_each_missing_training_dependency_is_rejected(self):
+        for missing in recipe.EXPECTED_SOFTWARE:
+            def installed(package):
+                if package == missing:
+                    raise recipe.PackageNotFoundError(package)
+                return recipe.EXPECTED_SOFTWARE[package]
+            with self.subTest(package=missing), patch.object(recipe, "version", side_effect=installed):
+                with self.assertRaises(recipe.RecipeError):
+                    recipe.verify_installed_software()
+
+    def test_each_drifted_training_dependency_is_rejected(self):
+        for drifted in recipe.EXPECTED_SOFTWARE:
+            def installed(package):
+                return "0.0.0" if package == drifted else recipe.EXPECTED_SOFTWARE[package]
+            with self.subTest(package=drifted), patch.object(recipe, "version", side_effect=installed):
+                with self.assertRaises(recipe.RecipeError):
+                    recipe.verify_installed_software()
+
+    def test_blocked_execution_does_not_probe_installed_packages(self):
+        with patch.object(recipe, "version", side_effect=AssertionError("premature probe")):
+            with self.assertRaises(recipe.RecipeError):
+                recipe.execute()
+
     def test_sft_rows_match_compiled_messages_for_every_example(self):
         train, validation = recipe.prepare_sft_rows()
         self.assertEqual((len(train), len(validation)), (24, 12))
