@@ -28,6 +28,9 @@ example is explicitly hypothetical; it is not a live runtime observation.
   compute label is the owner's Azure NC4as T4 v3 target, not evidence of GPU fit.
 - `training/identity_pilot.py`: standard-library-only validation and compilation.
 - `training/test_identity_pilot.py`: source/data regression checks.
+- `data/kova-identity-pilot-review.v1.json`: dataset-bound owner review ledger.
+- `training/identity_pilot_review.py`: fail-closed review validation that cannot
+  authorize model download, training or deployment.
 
 No private chats, customer records, credentials, external model outputs or
 upstream weight files are included. These examples were synthetically prepared
@@ -35,6 +38,13 @@ for Kova; human review is not yet complete. The corpus is a small starting set,
 not a claim of sufficient training diversity, model quality or independence of
 all paraphrases. Validation prompts are disjoint by normalized exact text, not
 by a proven semantic train/test contamination analysis.
+
+The review ledger contains all 36 source IDs in dataset order and is bound into
+the pilot plan by SHA-256. Every committed verdict remains `pending`; no reviewer
+or completion time is invented. The validator supports explicit in-progress,
+changes-requested and approved states, but even a fully approved ledger cannot
+grant training authorization or Phase B readiness. Complete it only through a
+real owner review of every prompt/answer pair.
 
 ## What is actually verified
 
