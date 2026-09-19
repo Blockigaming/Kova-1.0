@@ -212,11 +212,16 @@ def _artifact_inventory(output: Path, recipe: dict) -> list[dict]:
 
 
 def expected_receipt(output: Path, source_commit: str, *,
-                     runtime_evidence_sha256: str, global_steps: int,
+                     runtime_evidence_sha256: str,
+                     training_run_consumption_sha256: str,
+                     global_steps: int,
                      training_loss: float, root: Path = ROOT) -> dict:
     need(type(source_commit) is str and HEX40.fullmatch(source_commit) is not None)
     need(type(runtime_evidence_sha256) is str and
          re.fullmatch(r"[0-9a-f]{64}", runtime_evidence_sha256) is not None)
+    need(type(training_run_consumption_sha256) is str and
+         re.fullmatch(r"[0-9a-f]{64}",
+                      training_run_consumption_sha256) is not None)
     need(type(global_steps) is int and not isinstance(global_steps, bool) and
          0 < global_steps < 2**31)
     need(type(training_loss) in (int, float) and
@@ -243,6 +248,8 @@ def expected_receipt(output: Path, source_commit: str, *,
                 root, "config/kova-cosmo-runtime-guard.v1.json"
             ),
             "runtime_evidence_sha256": runtime_evidence_sha256,
+            "training_run_consumption_sha256":
+                training_run_consumption_sha256,
             "evaluation_plan_sha256": evaluation_plan_sha256,
             "software_lock_sha256": _source_digest(
                 root, "requirements/kova-cosmo-sft-py312-linux.lock"
@@ -274,13 +281,17 @@ def expected_receipt(output: Path, source_commit: str, *,
 
 
 def write_receipt(output: Path, source_commit: str, *,
-                  runtime_evidence_sha256: str, global_steps: int,
+                  runtime_evidence_sha256: str,
+                  training_run_consumption_sha256: str,
+                  global_steps: int,
                   training_loss: float, root: Path = ROOT) -> dict:
     """Create a new receipt without overwriting any existing evidence."""
     try:
         value = expected_receipt(
             output, source_commit,
             runtime_evidence_sha256=runtime_evidence_sha256,
+            training_run_consumption_sha256=
+                training_run_consumption_sha256,
             global_steps=global_steps,
             training_loss=training_loss,
             root=root,
@@ -313,6 +324,9 @@ def verify_receipt(output: Path, *, expected_source_commit: str | None = None,
         expected = expected_receipt(
             output, source_commit,
             runtime_evidence_sha256=lineage.get("runtime_evidence_sha256"),
+            training_run_consumption_sha256=lineage.get(
+                "training_run_consumption_sha256"
+            ),
             global_steps=training.get("global_steps"),
             training_loss=training.get("training_loss"),
             root=root,
@@ -324,6 +338,9 @@ def verify_receipt(output: Path, *, expected_source_commit: str | None = None,
             "source_commit": source_commit,
             "receipt_sha256": hashlib.sha256(raw).hexdigest(),
             "adapter_sha256": expected["adapter_sha256"],
+            "training_run_consumption_sha256": expected["lineage"][
+                "training_run_consumption_sha256"
+            ],
             "artifact_files": len(expected["artifacts"]),
             "actual_model_outputs_evaluated": False,
             "deployment_authorized": False,

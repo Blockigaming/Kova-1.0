@@ -10,7 +10,13 @@
     "required_family_quota_vcpus": 4
   },
   "pilot": {
+    "pilot_id": "kova-cosmo-qwen3-0.6b-eastus-t4-v1",
     "maximum_training_runs": 1,
+    "training_run_authorization": {
+      "status": "manifest_provisioning_required",
+      "manifest_sha256": null,
+      "environment_variable": "KOVA_COSMO_TRAINING_RUN_AUTHORIZATION"
+    },
     "automatic_deallocation_required": true,
     "automatic_cleanup_required": true,
     "cleanup_scope": "pilot_resource_group",
@@ -26,9 +32,12 @@
     "budget_alert_is_hard_stop": false
   },
   "required_controls": {
+    "atomic_single_run_authorization": true,
     "control_plane_deallocation_deadline": true,
     "independent_watchdog": true,
     "watchdog_permission_test": true,
+    "automatic_cleanup_execution_provenance": true,
+    "scoped_resource_group_deleted_inventory": true,
     "no_public_ip": true,
     "post_run_power_state_verification": true,
     "post_run_residual_resource_inventory": true

@@ -34,6 +34,7 @@
     "brand_keyword_alone_cannot_establish_identity_pass": true,
     "all_dimensions_require_explicit_pass_or_fail": true,
     "failed_or_missing_generation_cannot_be_scored_complete": true,
+    "review_receipt_required_for_completion": true,
     "reviewer_label_is_not_verified_identity": true,
     "automatic_release_allowed": false
   },

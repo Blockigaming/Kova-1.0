@@ -7,7 +7,7 @@
   "dataset_sha256": "6f696ca8d26a1d2cde112a0ce5daf286ca2a2aa7f994885605b514bbb94613a9",
   "prompt_sha256": "f60816e59a957d2764083bee1d458067323de14b8b7af7774fe190e11de9b92c",
   "rubric_path": "config/kova-cosmo-evaluation-rubric.v1.json",
-  "rubric_sha256": "6890422e47a88120a2fdd9bf33449765b8ab248fccb91adae29eaba80b9ac470",
+  "rubric_sha256": "712bc8780f9ae74beed4db0acb528c888f1bc959140f04badba01d2becd931c1",
   "validation_ids": [
     "validation-001",
     "validation-002",
@@ -40,6 +40,7 @@
     "same_runtime_except_adapter_required": true,
     "missing_or_failed_attempt_blocks_completion": true,
     "pending_score_blocks_completion": true,
+    "measured_completion_requires_review_receipt": true,
     "automatic_release_allowed": false
   },
   "actual_model_outputs_evaluated": false,

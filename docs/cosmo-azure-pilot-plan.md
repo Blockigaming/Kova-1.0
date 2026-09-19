@@ -28,7 +28,53 @@ Establish a separately verified control-plane deallocation mechanism with a dead
 
 `config/kova-cosmo-runtime-guard.v1.json` records the exact budget math and the current execution hold. `training.cosmo_runtime_guard` requires fresh, external (never checked-in) evidence of quota, capacity, price, ancillary-cost bound, a deallocated preflight state, no public IP, a control-plane deadline no more than 60 minutes away and a separately tested watchdog identity. The SFT entrypoint invokes this guard before it probes training dependencies. Both source authorization and runtime evidence must pass; an environment variable cannot override either one.
 
-The same module verifies a post-run control-plane observation of `deallocated` and a complete residual-resource inventory. `stopped` is rejected because Azure compute billing can continue in that state. Post-run evidence must bind allocation start, deallocation and observation timestamps; the exact allocated seconds; four-decimal compute and ancillary upper bounds; and their all-in sum. The compute bound must cover elapsed time at `$0.5260` per hour, allocation cannot exceed 60 minutes, ancillary exposure cannot exceed `$1.4740`, and the total cannot exceed `$2.0000`. Every pilot disk, interface or other resource must be recorded with deletion evidence and no billable residual may remain. This verification does not itself delete anything; the independently configured control-plane cleanup must do that.
+The one-run limit is an enforced at-most-once boundary, not a label. A future separately reviewed source change must pin the SHA-256 of exactly one external `training-run-authorization.v1.json`. That manifest fixes the pilot ID, sole output directory, owner-only state directory, one-run count and validity window. The trainer requires it through `KOVA_COSMO_TRAINING_RUN_AUTHORIZATION` and atomically creates `training-run-consumed.v1.json` with exclusive-create semantics before importing any training framework. The marker binds the exact clean source commit and fresh runtime-evidence digest and is hash-bound into the adapter receipt. Concurrent calls race on the same fixed marker, only one can succeed, copying the manifest to another directory is rejected, and the marker must remain in the protected external state directory until the pilot is formally closed. The current null manifest pin intentionally blocks training.
+
+The following future commands are prepared but were not run. Choose the final external paths once, create the manifest no more than seven days before the pilot, and then pin its printed digest in a separately reviewed exact-head source change:
+
+```sh
+export KOVA_COSMO_AUTH_STATE=/absolute/protected/path/kova-cosmo-pilot-v1
+export KOVA_COSMO_OUTPUT_DIR=/absolute/external/path/kova-cosmo-single-run
+test ! -e "$KOVA_COSMO_AUTH_STATE"
+test ! -e "$KOVA_COSMO_OUTPUT_DIR"
+install -d -m 700 "$KOVA_COSMO_AUTH_STATE"
+
+python3 - <<'PY'
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+
+state = Path(os.environ["KOVA_COSMO_AUTH_STATE"]).resolve(strict=True)
+output = Path(os.environ["KOVA_COSMO_OUTPUT_DIR"])
+issued = datetime.now(timezone.utc).replace(microsecond=0)
+manifest = {
+    "schema_version": 1,
+    "kind": "kova_cosmo_single_training_authorization",
+    "pilot_id": "kova-cosmo-qwen3-0.6b-eastus-t4-v1",
+    "output_directory": str(output),
+    "state_directory": str(state),
+    "maximum_training_runs": 1,
+    "issued_at_utc": issued.strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "expires_at_utc": (issued + timedelta(days=7)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    ),
+}
+path = state / "training-run-authorization.v1.json"
+raw = json.dumps(manifest, separators=(",", ":")).encode("ascii")
+with path.open("xb") as stream:
+    stream.write(raw)
+path.chmod(0o600)
+print(hashlib.sha256(raw).hexdigest())
+PY
+
+export KOVA_COSMO_TRAINING_RUN_AUTHORIZATION="$KOVA_COSMO_AUTH_STATE/training-run-authorization.v1.json"
+```
+
+Change only `pilot.training_run_authorization.status` to `single_manifest_pinned` and `manifest_sha256` to the printed lowercase digest. Never delete, replace or copy the manifest or consumption marker to retry a failed run; a consumed or failed authorization requires an explicit stop and a new owner decision, not a hidden second attempt.
+
+The same module verifies post-run lifecycle provenance rather than trusting an empty caller-supplied list. `stopped` is rejected because Azure compute billing can continue in that state. Post-run evidence must bind allocation start, deallocation and observation timestamps; the exact allocated seconds; four-decimal compute and ancillary upper bounds; and their all-in sum. The compute bound must cover elapsed time at `$0.5260` per hour, allocation cannot exceed 60 minutes, ancillary exposure cannot exceed `$1.4740`, and the total cannot exceed `$2.0000`. It must also identify successful automatic deallocation and cleanup executions, match both exact preflight rule IDs and watchdog principal, prove cleanup was scoped to the exclusive pilot resource group, and include a successful later control-plane inventory query showing that resource group deleted with zero remaining resource IDs. Missing, manual, mismatched, failed or out-of-order execution evidence is rejected. This verification does not itself delete anything; the independently configured control-plane cleanup must do that.
 
 After deallocation, run `python3 -m training.cosmo_runtime_guard --verify-post-run /absolute/path/post-run.json --preflight-evidence /absolute/path/runtime-evidence.json`. Both files must remain outside the repository. A successful report includes the SHA-256 of each exact evidence file, the reconciled duration and costs, residual-resource counts and `within_approved_budget: true`; it still grants no deployment or Phase B authority.
 
@@ -51,7 +97,7 @@ The operator must verify the final Azure allocation state is deallocated. Record
 
 `training.cosmo_evaluation_runner` implements step 5 but is source-blocked by the same quota, runtime-compatibility and spending controls plus a separate `KOVA_CONFIRM_PAID_EVALUATION=YES` acknowledgement. It re-verifies the offline snapshot and adapter receipt before importing model dependencies. It runs greedy, thinking-disabled generation capped at 256 new tokens for the 12 cases under all three variants, with identical hardware/software/runtime evidence. Each attempt is fsynced to an external append-only journal; the final bundle is written without overwriting existing evidence. A separately generated, owner-protected 256-bit per-run key is required through `KOVA_COSMO_EVALUATION_AUTH_KEY_FILE`; only its SHA-256 fingerprint may be pinned by a separately reviewed source change in `config/kova-cosmo-generation-trust.v1.json`. The guarded runner HMAC-authenticates all measurement fields, and later analysis independently verifies both the source-pinned trust anchor and MAC before accepting `kind: measured`. An arbitrary caller-selected key is rejected, and the secret key is never written into the bundle or repository. Generation failures remain explicit failed attempts, and every human score remains `pending`, so generation alone cannot complete comparison or authorize release.
 
-Human review uses the hash-locked `config/kova-cosmo-evaluation-rubric.v1.json` and a separate `training.cosmo_evaluation_review` score overlay bound to both that rubric and the SHA-256 of the immutable 36-attempt generation bundle. The rubric defines pass/fail criteria for identity, instruction adherence, factuality, format adherence, general quality and safety/truthfulness; a Kova keyword alone cannot establish an identity pass. The overlay contains only ordered attempt IDs and those six verdicts, so it cannot replace answers, latency, token counts, runtime lineage or artifact digests. Failed, missing, pre-scored, wrong-rubric or still-pending attempts block finalization. A completed overlay writes a separate reviewed bundle and review receipt, but a free-form reviewer label is not authenticated identity and the result still cannot authorize release, deployment or Phase B.
+Human review uses the hash-locked `config/kova-cosmo-evaluation-rubric.v1.json` and a separate `training.cosmo_evaluation_review` score overlay bound to both that rubric and the SHA-256 of the immutable 36-attempt generation bundle. The rubric defines pass/fail criteria for identity, instruction adherence, factuality, format adherence, general quality and safety/truthfulness; a Kova keyword alone cannot establish an identity pass. The overlay contains only ordered attempt IDs and those six verdicts, so it cannot replace answers, latency, token counts, runtime lineage or artifact digests. The general evaluation entrypoint rejects any measured bundle whose pending scores were edited in place, even when its runner HMAC remains valid. Only review finalization can write the separate scored bundle and receipt, and it re-verifies the original runner attestation plus the generation, rubric, overlay, reviewed-bundle and runner-measurement hashes before reporting a completed evaluation. Failed, missing, pre-scored, wrong-rubric, missing-receipt or tampered evidence blocks finalization. A free-form reviewer label is not authenticated identity, and the result still cannot authorize release, deployment or Phase B.
 
 ## Azure publication boundary
 

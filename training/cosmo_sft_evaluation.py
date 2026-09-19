@@ -93,6 +93,7 @@ def load_rubric(root: Path = pilot.ROOT) -> tuple[dict, str]:
             "brand_keyword_alone_cannot_establish_identity_pass": True,
             "all_dimensions_require_explicit_pass_or_fail": True,
             "failed_or_missing_generation_cannot_be_scored_complete": True,
+            "review_receipt_required_for_completion": True,
             "reviewer_label_is_not_verified_identity": True,
             "automatic_release_allowed": False,
         })
@@ -137,6 +138,7 @@ def load_plan(root: Path = pilot.ROOT) -> tuple[dict, dict[str, dict], str]:
                 "same_runtime_except_adapter_required": True,
                 "missing_or_failed_attempt_blocks_completion": True,
                 "pending_score_blocks_completion": True,
+                "measured_completion_requires_review_receipt": True,
                 "automatic_release_allowed": False,
             },
             "actual_model_outputs_evaluated": False,
@@ -242,6 +244,14 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
         need(type(row["scores"]) is dict and list(row["scores"]) == list(DIMENSIONS))
         need(all(value in ("pass", "fail", "pending")
                  for value in row["scores"].values()))
+        # Runner-produced measured evidence is generation evidence only.  Human
+        # verdicts are accepted exclusively by cosmo_evaluation_review, which
+        # binds the original bundle, rubric, score overlay, reviewed bundle and
+        # receipt.  This blocks callers from editing scores in-place while
+        # retaining a still-valid runner HMAC.
+        if bundle["kind"] == "measured":
+            need(all(value == "pending"
+                     for value in row["scores"].values()))
         if row["outcome"] == "success":
             need(type(row["answer"]) is str and 0 < len(row["answer"]) <= 750000)
             need(row["answer_sha256"] == answer_digest(row["answer"]))
@@ -282,6 +292,7 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
         "adapter_sha256": bundle["adapter_sha256"],
         "adapter_receipt_sha256": bundle["adapter_receipt_sha256"],
         "runner_attestation_verified": attestation is not None,
+        "review_receipt_verified": False,
         "measurement_sha256": (
             attestation["measurement_sha256"] if attestation else None
         ),
@@ -292,7 +303,7 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
                                         for variant in VARIANTS},
         "dimension_passes_by_variant": dimension_passes,
         "comparison_complete": complete,
-        "actual_model_outputs_evaluated": complete and bundle["kind"] == "measured",
+        "actual_model_outputs_evaluated": False,
         "human_reviewer_identity_verified": False,
         "automatic_release_allowed": False,
         "phase_b_ready": False,
@@ -318,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
                 "validation_cases": len(cases), "variants": len(VARIANTS),
                 "expected_attempts": len(cases) * len(VARIANTS),
                 "actual_model_outputs_evaluated": False,
+                "review_receipt_required_for_measured_completion": True,
                 "generation_signing_key_pinned": (
                     trust["status"] ==
                     "signing_key_pinned_for_guarded_runner"

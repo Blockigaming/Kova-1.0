@@ -15,6 +15,7 @@ class CosmoEvaluationReviewTests(unittest.TestCase):
         for index in range(36):
             attempts.append({
                 "id": f"attempt-{index:02d}",
+                "variant": review.evaluation.VARIANTS[index // 12],
                 "outcome": "success",
                 "answer": "immutable answer",
                 "scores": {dimension: "pending"
@@ -127,11 +128,17 @@ class CosmoEvaluationReviewTests(unittest.TestCase):
             generation_auth_key.write_text("ab" * 32, encoding="ascii")
             generation_auth_key.chmod(0o600)
             output = root / "reviewed"
-            analyses = [
-                {"comparison_complete": False},
-                {"actual_model_outputs_evaluated": True},
-            ]
-            with patch.object(review.evaluation, "analyze", side_effect=analyses):
+            generation_report = {
+                "kind": "measured",
+                "runner_attestation_verified": True,
+                "review_receipt_verified": False,
+                "comparison_complete": False,
+                "actual_model_outputs_evaluated": False,
+                "measurement_sha256": "c" * 64,
+            }
+            with patch.object(
+                review.evaluation, "analyze", return_value=generation_report
+            ):
                 report = review.finalize(
                     generation, overlay, adapter, output,
                     generation_auth_key=generation_auth_key,
@@ -143,9 +150,63 @@ class CosmoEvaluationReviewTests(unittest.TestCase):
                 (output / "review-receipt.v1.json").read_text()
             )
             self.assertTrue(report["actual_model_outputs_evaluated"])
+            self.assertTrue(report["review_receipt_verified"])
             self.assertFalse(receipt["human_reviewer_identity_verified"])
             self.assertFalse(receipt["automatic_release_allowed"])
             self.assertFalse(receipt["phase_b_ready"])
+
+    def test_finalized_verification_rejects_tampered_receipt_or_scores(self):
+        generation_report = {
+            "kind": "measured",
+            "runner_attestation_verified": True,
+            "review_receipt_verified": False,
+            "comparison_complete": False,
+            "actual_model_outputs_evaluated": False,
+            "measurement_sha256": "c" * 64,
+        }
+        for target in ("receipt", "reviewed"):
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                bundle = self.bundle()
+                generation = root / "generation.json"
+                generation.write_text(json.dumps(bundle), encoding="utf-8")
+                import hashlib
+                digest = hashlib.sha256(generation.read_bytes()).hexdigest()
+                overlay = root / "scores.json"
+                _, rubric_digest = review.evaluation.load_rubric()
+                overlay.write_text(
+                    json.dumps(self.overlay(bundle, digest, rubric_digest)),
+                    encoding="utf-8",
+                )
+                adapter = root / "adapter-run"
+                adapter.mkdir()
+                key = root / "generation-auth.key"
+                key.write_text("ab" * 32, encoding="ascii")
+                key.chmod(0o600)
+                output = root / "reviewed"
+                with patch.object(
+                    review.evaluation, "analyze",
+                    return_value=generation_report,
+                ):
+                    review.finalize(
+                        generation, overlay, adapter, output,
+                        generation_auth_key=key,
+                    )
+                    if target == "receipt":
+                        path = output / review.REVIEW_RECEIPT_NAME
+                        value = json.loads(path.read_text())
+                        value["reviewed_bundle_sha256"] = "0" * 64
+                        path.write_text(json.dumps(value), encoding="utf-8")
+                    else:
+                        path = output / review.REVIEWED_BUNDLE_NAME
+                        value = json.loads(path.read_text())
+                        value["attempts"][0]["scores"]["identity"] = "fail"
+                        path.write_text(json.dumps(value), encoding="utf-8")
+                    with self.assertRaises(review.ReviewError):
+                        review.verify_finalized(
+                            generation, overlay, adapter, output,
+                            generation_auth_key=key,
+                        )
 
 
 if __name__ == "__main__":

@@ -17,7 +17,10 @@ from release.model_revisions import MODEL_SOURCE_REFERENCES
 from training.cosmo_adapter_receipt import ReceiptError, write_receipt
 from training.cosmo_artifacts import ArtifactError, verify_snapshot
 from training.cosmo_hardware import HardwareError, verify_nvidia_t4
-from training.cosmo_runtime_guard import require_ready as require_runtime_ready
+from training.cosmo_runtime_guard import (
+    consume_training_authorization,
+    require_ready as require_runtime_ready,
+)
 from training.identity_pilot import load as load_identity_pilot
 from training.identity_pilot import format_messages
 
@@ -247,6 +250,12 @@ def execute() -> dict:
         raise RecipeError("kova cosmo sft recipe rejected") from None
     output, source_commit = resolve_output_directory()
     verify_source_checkout(source_commit)
+    run_authorization = consume_training_authorization(
+        source_commit=source_commit,
+        output_directory=output,
+        runtime_evidence_sha256=runtime_report["runtime_evidence_sha256"],
+        runtime_deadline_utc=runtime_report["deadline_utc"],
+    )
     os.environ.update({
         "HF_HUB_OFFLINE": "1",
         "TRANSFORMERS_OFFLINE": "1",
@@ -327,6 +336,9 @@ def execute() -> dict:
         return write_receipt(
             output, source_commit,
             runtime_evidence_sha256=runtime_report["runtime_evidence_sha256"],
+            training_run_consumption_sha256=run_authorization[
+                "training_run_consumption_sha256"
+            ],
             global_steps=training_result.global_step,
             training_loss=training_result.training_loss,
         )

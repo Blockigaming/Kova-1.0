@@ -1,5 +1,6 @@
 """Offline regression checks for the bounded Cosmo pilot runtime guard."""
 from copy import deepcopy
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 import hashlib
@@ -44,6 +45,11 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             "captured_at_utc": "2026-09-19T11:55:00Z",
             "subscription_id": "00000000-0000-0000-0000-000000000000",
             "resource_group": "kova-cosmo-pilot",
+            "cleanup_scope_resource_group_id": (
+                "/subscriptions/00000000-0000-0000-0000-000000000000/"
+                "resourceGroups/kova-cosmo-pilot"
+            ),
+            "resource_group_exclusive_to_pilot": True,
             "vm_name": "kova-cosmo-pilot-1",
             "region": "eastus",
             "vm_size": "Standard_NC4as_T4_v3",
@@ -56,14 +62,96 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             "control_plane_deallocation_deadline_utc":
                 "2026-09-19T13:00:00Z",
             "control_plane_deallocation_rule_id": "rule-1",
+            "control_plane_cleanup_rule_id": "cleanup-rule-1",
             "watchdog_principal": "watchdog-1",
             "watchdog_permission_tested_at_utc": "2026-09-19T11:50:00Z",
             "watchdog_test_result": "passed",
+            "cleanup_permission_tested_at_utc": "2026-09-19T11:50:00Z",
+            "cleanup_test_result": "passed",
         }
         value.update(changes)
         path = self.base / "runtime-evidence.json"
         path.write_text(json.dumps(value), encoding="utf-8")
         return path, value
+
+    def post_run(self, preflight, **changes):
+        value = {
+            "schema_version": 1,
+            "observed_at_utc": "2026-09-19T12:45:00Z",
+            "allocation_started_at_utc": "2026-09-19T12:00:00Z",
+            "deallocated_at_utc": "2026-09-19T12:40:00Z",
+            "subscription_id": preflight["subscription_id"],
+            "resource_group": preflight["resource_group"],
+            "vm_name": preflight["vm_name"],
+            "deallocation_deadline_utc":
+                preflight["control_plane_deallocation_deadline_utc"],
+            "power_state": "deallocated",
+            "public_ip_attached": False,
+            "allocated_seconds": 2400,
+            "compute_cost_upper_bound_usd": "0.3507",
+            "ancillary_cost_observed_or_bound_usd": "0.1000",
+            "all_in_cost_upper_bound_usd": "0.4507",
+            "residual_resources": [],
+            "automatic_deallocation_execution": {
+                "mechanism": "azure_control_plane",
+                "rule_id": preflight["control_plane_deallocation_rule_id"],
+                "execution_id": "deallocation-execution-1",
+                "principal": preflight["watchdog_principal"],
+                "trigger": "deadline_rule",
+                "status": "succeeded",
+                "completed_at_utc": "2026-09-19T12:40:00Z",
+                "evidence": "immutable control-plane execution record",
+            },
+            "automatic_cleanup_execution": {
+                "mechanism": "azure_control_plane",
+                "rule_id": preflight["control_plane_cleanup_rule_id"],
+                "execution_id": "cleanup-execution-1",
+                "principal": preflight["watchdog_principal"],
+                "trigger": "post_run_automatic_cleanup",
+                "status": "succeeded",
+                "scope_resource_group_id":
+                    preflight["cleanup_scope_resource_group_id"],
+                "completed_at_utc": "2026-09-19T12:42:00Z",
+                "evidence": "immutable control-plane cleanup execution record",
+            },
+            "scoped_inventory": {
+                "scope_resource_group_id":
+                    preflight["cleanup_scope_resource_group_id"],
+                "query_id": "resource-graph-query-1",
+                "query_succeeded": True,
+                "queried_at_utc": "2026-09-19T12:44:00Z",
+                "resource_group_state": "deleted",
+                "remaining_resource_ids": [],
+                "evidence": "scoped control-plane query returned group absent",
+            },
+        }
+        value.update(changes)
+        return value
+
+    def training_authorization(self):
+        state = self.base / "training-authorization-state"
+        state.mkdir(mode=0o700)
+        output = self.base / "single-training-output"
+        value = {
+            "schema_version": 1,
+            "kind": "kova_cosmo_single_training_authorization",
+            "pilot_id": guard.PILOT_ID,
+            "output_directory": str(output),
+            "state_directory": str(state),
+            "maximum_training_runs": 1,
+            "issued_at_utc": "2026-09-19T11:55:00Z",
+            "expires_at_utc": "2026-09-20T11:55:00Z",
+        }
+        path = state / guard.TRAINING_AUTHORIZATION_NAME
+        path.write_text(json.dumps(value), encoding="utf-8")
+        path.chmod(0o600)
+        self.policy["pilot"]["training_run_authorization"] = {
+            "status": "single_manifest_pinned",
+            "manifest_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+            "environment_variable": guard.TRAINING_AUTHORIZATION_ENV,
+        }
+        self.write_policy()
+        return path, output
 
     def test_checked_in_policy_records_budget_but_withholds_spending(self):
         report = guard.dry_run()
@@ -77,6 +165,7 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
         self.assertEqual(report["blockers"], [
             "resource_creation_release_withheld",
             "spending_release_withheld",
+            "single_training_run_authorization_unpinned",
             "runtime_evidence_missing",
         ])
         self.assertFalse(report["resource_created"])
@@ -129,6 +218,74 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
         self.assertFalse(report["phase_b_ready"])
         self.assertEqual(report["runtime_evidence_sha256"],
                          hashlib.sha256(path.read_bytes()).hexdigest())
+
+    def test_single_training_authorization_is_consumed_atomically_once(self):
+        authorization, output = self.training_authorization()
+
+        def consume():
+            return guard.consume_training_authorization(
+                source_commit="a" * 40,
+                output_directory=output,
+                runtime_evidence_sha256="e" * 64,
+                runtime_deadline_utc="2026-09-19T13:00:00Z",
+                root=self.root,
+                authorization_path=authorization,
+                now=NOW,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(consume) for _ in range(2)]
+        successes = []
+        failures = []
+        for future in futures:
+            try:
+                successes.append(future.result())
+            except guard.RuntimeGuardError as error:
+                failures.append(error)
+        self.assertEqual((len(successes), len(failures)), (1, 1))
+        self.assertEqual(
+            successes[0]["status"],
+            "single_training_run_authorization_consumed",
+        )
+        marker = authorization.parent / guard.TRAINING_CONSUMPTION_NAME
+        self.assertTrue(marker.is_file())
+        self.assertEqual(marker.stat().st_mode & 0o077, 0)
+        consumed = json.loads(marker.read_text())
+        self.assertEqual(consumed["source_commit"], "a" * 40)
+        self.assertEqual(consumed["runtime_evidence_sha256"], "e" * 64)
+        self.assertEqual(
+            successes[0]["training_run_consumption_sha256"],
+            hashlib.sha256(marker.read_bytes()).hexdigest(),
+        )
+
+    def test_training_authorization_rejects_copy_and_binding_drift(self):
+        authorization, output = self.training_authorization()
+        copied_state = self.base / "copied-authorization-state"
+        copied_state.mkdir(mode=0o700)
+        copied = copied_state / guard.TRAINING_AUTHORIZATION_NAME
+        copied.write_bytes(authorization.read_bytes())
+        copied.chmod(0o600)
+        cases = (
+            {"authorization_path": copied},
+            {"source_commit": "B" * 40},
+            {"runtime_evidence_sha256": "F" * 64},
+            {"output_directory": self.base / "different-output"},
+        )
+        for changes in cases:
+            arguments = {
+                "source_commit": "a" * 40,
+                "output_directory": output,
+                "runtime_evidence_sha256": "e" * 64,
+                "runtime_deadline_utc": "2026-09-19T13:00:00Z",
+                "root": self.root,
+                "authorization_path": authorization,
+                "now": NOW,
+            }
+            arguments.update(changes)
+            with self.subTest(changes=changes), self.assertRaises(
+                guard.RuntimeGuardError
+            ):
+                guard.consume_training_authorization(**arguments)
 
     def test_deadline_cannot_exceed_sixty_minutes(self):
         self.release()
@@ -191,37 +348,15 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
 
     def test_post_run_requires_deallocated_state_and_inventory(self):
         _, preflight = self.evidence()
-        post = {
-            "schema_version": 1,
-            "observed_at_utc": "2026-09-19T12:40:00Z",
-            "allocation_started_at_utc": "2026-09-19T12:00:00Z",
-            "deallocated_at_utc": "2026-09-19T12:40:00Z",
-            "subscription_id": preflight["subscription_id"],
-            "resource_group": preflight["resource_group"],
-            "vm_name": preflight["vm_name"],
-            "deallocation_deadline_utc":
-                preflight["control_plane_deallocation_deadline_utc"],
-            "power_state": "deallocated",
-            "public_ip_attached": False,
-            "allocated_seconds": 2400,
-            "compute_cost_upper_bound_usd": "0.3507",
-            "ancillary_cost_observed_or_bound_usd": "0.1000",
-            "all_in_cost_upper_bound_usd": "0.4507",
-            "residual_resources": [{
-                "resource_id": "disk-1",
-                "resource_type": "managed_disk",
-                "billable": False,
-                "disposition": "deleted",
-                "evidence": "deletion confirmed",
-            }],
-        }
+        post = self.post_run(preflight)
         path = self.base / "post-run.json"
         path.write_text(json.dumps(post), encoding="utf-8")
         report = guard.verify_post_run(preflight, path)
-        self.assertEqual(report["status"], "deallocation_verified")
+        self.assertEqual(report["status"], "lifecycle_cleanup_verified")
         self.assertEqual(report["billable_residual_resource_count"], 0)
         self.assertTrue(report["automatic_deallocation_verified"])
         self.assertTrue(report["automatic_cleanup_verified"])
+        self.assertTrue(report["resource_group_deleted"])
         self.assertEqual(report["allocated_seconds"], 2400)
         self.assertEqual(report["all_in_cost_upper_bound_usd"], "0.4507")
         self.assertTrue(report["within_approved_budget"])
@@ -233,34 +368,44 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             guard.verify_post_run(preflight, path)
 
         post["power_state"] = "deallocated"
-        post["residual_resources"][0].update(
-            billable=True,
-            disposition="retained_within_approved_budget",
-        )
+        post["scoped_inventory"]["resource_group_state"] = "present"
         path.write_text(json.dumps(post), encoding="utf-8")
         with self.assertRaises(guard.RuntimeGuardError):
             guard.verify_post_run(preflight, path)
 
+    def test_post_run_rejects_fake_or_incomplete_cleanup_provenance(self):
+        _, preflight = self.evidence()
+        path = self.base / "post-cleanup.json"
+        mutations = (
+            lambda value: value.pop("automatic_cleanup_execution"),
+            lambda value: value["automatic_cleanup_execution"].update(
+                trigger="manual_cleanup"
+            ),
+            lambda value: value["automatic_cleanup_execution"].update(
+                rule_id="different-rule"
+            ),
+            lambda value: value["scoped_inventory"].update(
+                scope_resource_group_id="/subscriptions/fake/resourceGroups/fake"
+            ),
+            lambda value: value["scoped_inventory"].update(
+                query_succeeded=False
+            ),
+            lambda value: value["scoped_inventory"].update(
+                remaining_resource_ids=["surviving-disk"]
+            ),
+        )
+        for mutate in mutations:
+            value = self.post_run(preflight)
+            mutate(value)
+            path.write_text(json.dumps(value), encoding="utf-8")
+            with self.subTest(mutate=mutate), self.assertRaises(
+                guard.RuntimeGuardError
+            ):
+                guard.verify_post_run(preflight, path)
+
     def test_post_run_duration_and_cost_reconciliation_fail_closed(self):
         _, preflight = self.evidence()
-        base = {
-            "schema_version": 1,
-            "observed_at_utc": "2026-09-19T12:40:00Z",
-            "allocation_started_at_utc": "2026-09-19T12:00:00Z",
-            "deallocated_at_utc": "2026-09-19T12:40:00Z",
-            "subscription_id": preflight["subscription_id"],
-            "resource_group": preflight["resource_group"],
-            "vm_name": preflight["vm_name"],
-            "deallocation_deadline_utc":
-                preflight["control_plane_deallocation_deadline_utc"],
-            "power_state": "deallocated",
-            "public_ip_attached": False,
-            "allocated_seconds": 2400,
-            "compute_cost_upper_bound_usd": "0.3507",
-            "ancillary_cost_observed_or_bound_usd": "0.1000",
-            "all_in_cost_upper_bound_usd": "0.4507",
-            "residual_resources": [],
-        }
+        base = self.post_run(preflight)
         mutations = [
             {"allocated_seconds": 2399},
             {"compute_cost_upper_bound_usd": "0.3506"},
@@ -291,24 +436,7 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
 
     def test_post_run_cli_binds_both_external_evidence_files(self):
         preflight_path, preflight = self.evidence()
-        post = {
-            "schema_version": 1,
-            "observed_at_utc": "2026-09-19T12:40:00Z",
-            "allocation_started_at_utc": "2026-09-19T12:00:00Z",
-            "deallocated_at_utc": "2026-09-19T12:40:00Z",
-            "subscription_id": preflight["subscription_id"],
-            "resource_group": preflight["resource_group"],
-            "vm_name": preflight["vm_name"],
-            "deallocation_deadline_utc":
-                preflight["control_plane_deallocation_deadline_utc"],
-            "power_state": "deallocated",
-            "public_ip_attached": False,
-            "allocated_seconds": 2400,
-            "compute_cost_upper_bound_usd": "0.3507",
-            "ancillary_cost_observed_or_bound_usd": "0.1000",
-            "all_in_cost_upper_bound_usd": "0.4507",
-            "residual_resources": [],
-        }
+        post = self.post_run(preflight)
         post_path = self.base / "post-cli.json"
         post_path.write_text(json.dumps(post), encoding="utf-8")
         output = io.StringIO()
@@ -319,7 +447,7 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
             ])
         self.assertEqual(code, 0)
         report = json.loads(output.getvalue())
-        self.assertEqual(report["status"], "deallocation_verified")
+        self.assertEqual(report["status"], "lifecycle_cleanup_verified")
         self.assertEqual(
             report["preflight_evidence_sha256"],
             hashlib.sha256(preflight_path.read_bytes()).hexdigest(),
@@ -378,6 +506,51 @@ class CosmoRuntimeGuardTests(unittest.TestCase):
              }):
             with self.assertRaises(recipe.RecipeError):
                 recipe.execute()
+
+    def test_training_consumes_single_run_claim_before_heavy_imports(self):
+        value = deepcopy(recipe.load_recipe())
+        value["account_gates"].update({
+            "eastus_ncast4_quota_verified": True,
+            "runtime_compatibility_verified": True,
+        })
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            snapshot = root / "snapshot"
+            snapshot.mkdir()
+            output = root / "output"
+            environment = {
+                "KOVA_CONFIRM_PAID_TRAINING": "YES",
+                "KOVA_COSMO_VERIFIED_SNAPSHOT": str(snapshot),
+                "KOVA_COSMO_OUTPUT_DIR": str(output),
+                "KOVA_SOURCE_COMMIT": "a" * 40,
+            }
+            with patch.object(recipe, "load_recipe", return_value=value), \
+                 patch.object(recipe, "require_runtime_ready", return_value={
+                     "runtime_evidence_sha256": "e" * 64,
+                     "deadline_utc": "2026-09-19T13:00:00Z",
+                 }), \
+                 patch.object(recipe, "verify_installed_software"), \
+                 patch.object(recipe, "verify_snapshot"), \
+                 patch.object(recipe, "verify_source_checkout"), \
+                 patch.object(
+                     recipe, "consume_training_authorization",
+                     side_effect=guard.RuntimeGuardError("claim called"),
+                 ) as consume, \
+                 patch.dict("os.environ", environment, clear=True), \
+                 patch.dict("sys.modules", {
+                     "torch": None, "datasets": None,
+                     "peft": None, "trl": None,
+                 }):
+                with self.assertRaisesRegex(
+                    guard.RuntimeGuardError, "claim called"
+                ):
+                    recipe.execute()
+            consume.assert_called_once_with(
+                source_commit="a" * 40,
+                output_directory=output,
+                runtime_evidence_sha256="e" * 64,
+                runtime_deadline_utc="2026-09-19T13:00:00Z",
+            )
 
 
 if __name__ == "__main__":

@@ -90,6 +90,11 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             for variant in evaluation.VARIANTS
         ]
         if kind == "measured":
+            for row in value["attempts"]:
+                row["scores"] = {
+                    dimension: "pending"
+                    for dimension in evaluation.DIMENSIONS
+                }
             value["runner_attestation"] = create_attestation(
                 value, self.auth_key_bytes
             )
@@ -127,7 +132,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         self.assertFalse(result["automatic_release_allowed"])
         self.assertFalse(result["phase_b_ready"])
 
-    def test_measured_bundle_is_still_not_release_authority(self):
+    def test_measured_generation_requires_hash_bound_review_receipt(self):
         bundle = self.complete_bundle("measured")
         receipt = {
             "adapter_sha256": self.adapter_sha256,
@@ -135,7 +140,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         }
         with patch.object(evaluation, "verify_adapter_receipt", return_value=receipt) as verify:
             result = evaluation.analyze(
-                bundle, require_complete=True,
+                bundle, require_complete=False,
                 adapter_output=Path("/external/adapter-run"),
                 generation_auth_key=self.auth_key,
             )
@@ -144,11 +149,43 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             expected_source_commit=bundle["source_commit"],
             root=evaluation.pilot.ROOT,
         )
-        self.assertTrue(result["actual_model_outputs_evaluated"])
+        self.assertFalse(result["comparison_complete"])
+        self.assertFalse(result["actual_model_outputs_evaluated"])
+        self.assertFalse(result["review_receipt_verified"])
         self.assertTrue(result["runner_attestation_verified"])
         self.assertFalse(result["human_reviewer_identity_verified"])
         self.assertFalse(result["automatic_release_allowed"])
         self.assertEqual(result["closed_checklist_ids"], [])
+        with patch.object(
+            evaluation, "verify_adapter_receipt", return_value=receipt
+        ), self.assertRaises(evaluation.EvaluationError):
+            evaluation.analyze(
+                bundle, require_complete=True,
+                adapter_output=Path("/external/adapter-run"),
+                generation_auth_key=self.auth_key,
+            )
+
+    def test_in_place_human_scores_cannot_bypass_review_finalization(self):
+        bundle = self.complete_bundle("measured")
+        receipt = {
+            "adapter_sha256": self.adapter_sha256,
+            "receipt_sha256": self.adapter_receipt_sha256,
+        }
+        for row in bundle["attempts"]:
+            row["scores"] = {
+                dimension: "pass" for dimension in evaluation.DIMENSIONS
+            }
+        # Scores are deliberately excluded from the runner MAC, so the
+        # attestation remains valid.  The evaluation entrypoint must still
+        # reject this and require the separate hash-bound review receipt.
+        with patch.object(
+            evaluation, "verify_adapter_receipt", return_value=receipt
+        ), self.assertRaises(evaluation.EvaluationError):
+            evaluation.analyze(
+                bundle, require_complete=True,
+                adapter_output=Path("/external/adapter-run"),
+                generation_auth_key=self.auth_key,
+            )
 
     def test_measured_bundle_requires_matching_verified_adapter_receipt(self):
         bundle = self.complete_bundle("measured")

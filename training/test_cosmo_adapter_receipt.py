@@ -17,11 +17,14 @@ from training.kova_cosmo_sft import EXPECTED_TARGETS
 class CosmoAdapterReceiptTests(unittest.TestCase):
     source_commit = "a" * 40
     runtime_evidence_sha256 = "e" * 64
+    training_run_consumption_sha256 = "f" * 64
 
     def write_receipt(self, output: Path):
         return receipt.write_receipt(
             output, self.source_commit,
             runtime_evidence_sha256=self.runtime_evidence_sha256,
+            training_run_consumption_sha256=
+                self.training_run_consumption_sha256,
             global_steps=18,
             training_loss=1.25,
         )
@@ -30,6 +33,8 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
         return receipt.expected_receipt(
             output, self.source_commit,
             runtime_evidence_sha256=self.runtime_evidence_sha256,
+            training_run_consumption_sha256=
+                self.training_run_consumption_sha256,
             global_steps=18,
             training_loss=1.25,
         )
@@ -88,6 +93,7 @@ class CosmoAdapterReceiptTests(unittest.TestCase):
             for field in ("dataset_sha256", "prompt_sha256", "review_sha256",
                           "recipe_sha256", "runtime_guard_sha256",
                           "runtime_evidence_sha256",
+                          "training_run_consumption_sha256",
                           "evaluation_plan_sha256", "software_lock_sha256"):
                 self.assertRegex(value["lineage"][field], r"^[0-9a-f]{64}$")
             self.assertFalse(value["actual_model_outputs_evaluated"])
