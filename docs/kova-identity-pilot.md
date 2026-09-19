@@ -100,3 +100,35 @@ is not proof that a fine-tune ran successfully or that its general quality impro
 The license permits modifications under its terms and imposes notice conditions
 on redistribution. It does not require a supplier name in every ordinary answer.
 The fine-tuning method changes trainable parameters; this starter has not done so.
+
+## Dependency inspection — September 19, 2026
+
+Inspected the published wheels for TRL 1.13.0, Transformers 5.17.0,
+PEFT 0.21.0, Accelerate 1.15.0 and Datasets 5.0.1 without installing
+the training stack or downloading weights. TRL's SFTTrainer source accepts
+conversational prompt/completion records and forwards model_init_kwargs.revision
+to its automatic processing-class loader. This is source inspection, not proof
+of working token masks or GPU execution.
+
+The guarded execute path now checks installed distribution versions against
+all five recipe pins after authorization checks and before heavy imports.
+Missing or mismatched packages reject execution. This metadata check cannot
+prove wheel integrity, transitive compatibility or CUDA support.
+
+The Python 3.12/Linux training dependency graph is now hash-locked separately
+from a CPU-only verification graph. Using the two hash-verified tokenizer assets
+from the pinned Cosmo revision, `training.probe_cosmo_loss_masks` exercised the
+real TRL 1.13.0 preprocessing method and collator on all 36 examples. It verified
+24 training and 12 validation records, prompt exclusion, complete assistant
+labels including EOS, attention masks and 258 padding positions. The longest
+example was 426 of 1,024 tokens. Four dependency-light regression tests reject
+prompt leakage, lost completion labels and changed token sequences.
+
+This verification loaded no model weights, constructed no model, ran no forward
+or backward pass and used CPU-only PyTorch. It therefore does not prove that the
+LoRA targets match a loaded checkpoint, that CUDA/PyTorch is compatible with an
+Azure T4, that FP16 training is stable, or that save/reload and evaluation work.
+Those checks, human data review and the base/configured-base/trained comparison
+remain open. The separate CPU probe lock must not be used as a GPU training lock.
+
+Reference: https://huggingface.co/docs/trl/sft_trainer

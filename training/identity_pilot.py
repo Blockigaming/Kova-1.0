@@ -129,18 +129,24 @@ def load(root: Path = ROOT) -> tuple[dict, str, list]:
         raise PilotError('identity pilot source rejected') from None
 
 
+def format_messages(prompt: str, row: dict) -> list[dict]:
+    """Format a validated pilot row, preserving hypothetical provenance context."""
+    system = prompt
+    if 'runtime_fixture' in row:
+        # A source-controlled hypothetical evaluation, NEVER a real attestation.
+        system += ('\nOffline evaluation fixture only. For this hypothetical session, '
+                   'trusted runtime metadata is: ' +
+                   json.dumps(row['runtime_fixture'], sort_keys=True) + '\n')
+    return [{'role': 'system', 'content': system},
+            *(dict(message) for message in row['messages'])]
+
+
 def prepare(root: Path = ROOT, output: Path | None = None) -> dict:
     plan, prompt, rows = load(root)
     parts = {'train': [], 'validation': []}
     for row in rows:
-        system = prompt
-        if 'runtime_fixture' in row:
-            # A source-controlled hypothetical evaluation, NEVER a real attestation.
-            system += ('\nOffline evaluation fixture only. For this hypothetical session, '
-                       'trusted runtime metadata is: ' +
-                       json.dumps(row['runtime_fixture'], sort_keys=True) + '\n')
         parts[row['split']].append(json.dumps({
-            'messages': [{'role': 'system', 'content': system}, *row['messages']]
+            'messages': format_messages(prompt, row)
         }, ensure_ascii=False, separators=(',', ':')))
     encoded = {key: ('\n'.join(lines) + '\n').encode('utf-8')
                for key, lines in parts.items()}
