@@ -1,5 +1,6 @@
 """Synthetic evidence tests for the three-way Cosmo evaluation contract."""
 from copy import deepcopy
+from pathlib import Path
 import socket
 import subprocess
 import unittest
@@ -12,6 +13,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
     def setUp(self):
         self.plan, self.cases, self.plan_sha256 = evaluation.load_plan()
         self.adapter_sha256 = "a" * 64
+        self.adapter_receipt_sha256 = "d" * 64
 
     def bundle(self, kind="synthetic_fixture"):
         return {
@@ -20,6 +22,7 @@ class CosmoSftEvaluationTests(unittest.TestCase):
             "plan_sha256": self.plan_sha256,
             "source_commit": "b" * 40,
             "adapter_sha256": self.adapter_sha256,
+            "adapter_receipt_sha256": self.adapter_receipt_sha256,
             "attempts": [],
         }
 
@@ -41,7 +44,9 @@ class CosmoSftEvaluationTests(unittest.TestCase):
                 "base_revision": self.plan["base_revision"],
                 "adapter_sha256": self.adapter_sha256
                 if variant == "trained_adapter" else None,
+                "adapter_receipt_sha256": self.adapter_receipt_sha256,
                 "software_lock_sha256": "c" * 64,
+                "runtime_evidence_sha256": "e" * 64,
                 "hardware": "synthetic-no-gpu-fixture",
                 "precision": "float32-fixture",
                 "quantization": "none",
@@ -73,6 +78,15 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         self.assertFalse(self.plan["actual_model_outputs_evaluated"])
         self.assertFalse(self.plan["phase_b_ready"])
 
+    def test_human_scoring_rubric_is_hash_bound_and_nonrelease(self):
+        rubric, digest = evaluation.load_rubric()
+        self.assertEqual(self.plan["rubric_path"], evaluation.RUBRIC_PATH)
+        self.assertEqual(self.plan["rubric_sha256"], digest)
+        self.assertEqual(tuple(rubric["dimensions"]), evaluation.DIMENSIONS)
+        self.assertFalse(rubric["review_rules"]["automatic_release_allowed"])
+        self.assertFalse(rubric["deployment_authorized"])
+        self.assertFalse(rubric["phase_b_ready"])
+
     def test_complete_synthetic_fixture_never_claims_real_evaluation(self):
         result = evaluation.analyze(self.complete_bundle(), require_complete=True)
         self.assertEqual(result["status"], "comparison_complete")
@@ -84,13 +98,43 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         self.assertFalse(result["phase_b_ready"])
 
     def test_measured_bundle_is_still_not_release_authority(self):
-        result = evaluation.analyze(
-            self.complete_bundle("measured"), require_complete=True
+        bundle = self.complete_bundle("measured")
+        receipt = {
+            "adapter_sha256": self.adapter_sha256,
+            "receipt_sha256": self.adapter_receipt_sha256,
+        }
+        with patch.object(evaluation, "verify_adapter_receipt", return_value=receipt) as verify:
+            result = evaluation.analyze(
+                bundle, require_complete=True,
+                adapter_output=Path("/external/adapter-run"),
+            )
+        verify.assert_called_once_with(
+            Path("/external/adapter-run"),
+            expected_source_commit=bundle["source_commit"],
+            root=evaluation.pilot.ROOT,
         )
         self.assertTrue(result["actual_model_outputs_evaluated"])
         self.assertFalse(result["human_reviewer_identity_verified"])
         self.assertFalse(result["automatic_release_allowed"])
         self.assertEqual(result["closed_checklist_ids"], [])
+
+    def test_measured_bundle_requires_matching_verified_adapter_receipt(self):
+        bundle = self.complete_bundle("measured")
+        with self.assertRaises(evaluation.EvaluationError):
+            evaluation.analyze(bundle)
+        for field, wrong in (("adapter_sha256", "0" * 64),
+                             ("receipt_sha256", "0" * 64)):
+            verified = {
+                "adapter_sha256": self.adapter_sha256,
+                "receipt_sha256": self.adapter_receipt_sha256,
+            }
+            verified[field] = wrong
+            with self.subTest(field=field), patch.object(
+                evaluation, "verify_adapter_receipt", return_value=verified
+            ), self.assertRaises(evaluation.EvaluationError):
+                evaluation.analyze(
+                    bundle, adapter_output=Path("/external/adapter-run")
+                )
 
     def test_missing_failed_or_pending_attempt_blocks_completion(self):
         values = []
@@ -141,7 +185,9 @@ class CosmoSftEvaluationTests(unittest.TestCase):
         for field, wrong in (
             ("base_model", "unapproved/model"),
             ("base_revision", "0" * 40),
+            ("adapter_receipt_sha256", "e" * 64),
             ("software_lock_sha256", "d" * 64),
+            ("runtime_evidence_sha256", "f" * 64),
             ("hardware", "different-hardware"),
             ("precision", "different-precision"),
             ("quantization", "different-quantization"),

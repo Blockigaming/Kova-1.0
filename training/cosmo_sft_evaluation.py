@@ -10,9 +10,11 @@ import re
 import sys
 
 from training import identity_pilot as pilot
+from training.cosmo_adapter_receipt import ReceiptError, verify_receipt as verify_adapter_receipt
 from training.kova_cosmo_sft import load_recipe
 
 PLAN_PATH = "config/kova-cosmo-evaluation-plan.v1.json"
+RUBRIC_PATH = "config/kova-cosmo-evaluation-rubric.v1.json"
 MAX_BYTES = 16 * 1024 * 1024
 HEX40 = re.compile(r"[0-9a-f]{40}")
 HEX64 = re.compile(r"[0-9a-f]{64}")
@@ -60,10 +62,48 @@ def read_json(path: Path) -> object:
         raise EvaluationError("cosmo evaluation evidence rejected") from None
 
 
+def load_rubric(root: Path = pilot.ROOT) -> tuple[dict, str]:
+    try:
+        raw = pilot.read_asset(root, RUBRIC_PATH)
+        value = pilot.parse(raw.decode("utf-8"))
+        need(type(value) is dict and list(value) == [
+            "schema_version", "status", "model_slot", "dimensions",
+            "review_rules", "deployment_authorized", "phase_b_ready",
+        ])
+        need(value["schema_version"] == 1)
+        need(value["status"] == "owner_review_protocol_not_release_authority")
+        need(value["model_slot"] == "work-cosmo")
+        need(type(value["dimensions"]) is dict and
+             list(value["dimensions"]) == list(DIMENSIONS))
+        for dimension in DIMENSIONS:
+            criteria = value["dimensions"][dimension]
+            need(type(criteria) is dict and list(criteria) == ["pass", "fail"])
+            for verdict in ("pass", "fail"):
+                text = criteria[verdict]
+                need(type(text) is str and 20 <= len(text) <= 1000)
+            need(criteria["pass"] != criteria["fail"])
+        need(value["review_rules"] == {
+            "score_each_attempt_independently": True,
+            "use_case_variant_and_recorded_answer_only": True,
+            "brand_keyword_alone_cannot_establish_identity_pass": True,
+            "all_dimensions_require_explicit_pass_or_fail": True,
+            "failed_or_missing_generation_cannot_be_scored_complete": True,
+            "reviewer_label_is_not_verified_identity": True,
+            "automatic_release_allowed": False,
+        })
+        need(value["deployment_authorized"] is False)
+        need(value["phase_b_ready"] is False)
+        return value, hashlib.sha256(raw).hexdigest()
+    except (OSError, ValueError, TypeError, KeyError, UnicodeError,
+            RecursionError, AttributeError):
+        raise EvaluationError("cosmo evaluation evidence rejected") from None
+
+
 def load_plan(root: Path = pilot.ROOT) -> tuple[dict, dict[str, dict], str]:
     try:
         identity_plan, _, rows = pilot.load(root)
         recipe = load_recipe(root)
+        _, rubric_sha256 = load_rubric(root)
         raw = pilot.read_asset(root, PLAN_PATH)
         plan = pilot.parse(raw.decode("utf-8"))
         validation = [row for row in rows if row["split"] == "validation"]
@@ -75,6 +115,8 @@ def load_plan(root: Path = pilot.ROOT) -> tuple[dict, dict[str, dict], str]:
             "base_revision": recipe["base_revision"],
             "dataset_sha256": identity_plan["dataset_sha256"],
             "prompt_sha256": identity_plan["prompt_sha256"],
+            "rubric_path": RUBRIC_PATH,
+            "rubric_sha256": rubric_sha256,
             "validation_ids": [row["id"] for row in validation],
             "variants": [
                 {"id": "base", "kova_system_prompt": False,
@@ -103,12 +145,13 @@ def load_plan(root: Path = pilot.ROOT) -> tuple[dict, dict[str, dict], str]:
 
 
 def analyze(bundle: dict, *, root: Path = pilot.ROOT,
-            require_complete: bool = False) -> dict:
+            require_complete: bool = False,
+            adapter_output: Path | None = None) -> dict:
     plan, cases, plan_sha256 = load_plan(root)
     recipe = load_recipe(root)
     need(type(bundle) is dict and list(bundle) == [
         "schema_version", "kind", "plan_sha256", "source_commit",
-        "adapter_sha256", "attempts",
+        "adapter_sha256", "adapter_receipt_sha256", "attempts",
     ])
     need(bundle["schema_version"] == 1)
     need(bundle["kind"] in ("synthetic_fixture", "measured"))
@@ -117,7 +160,24 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
          HEX40.fullmatch(bundle["source_commit"]) is not None)
     need(type(bundle["adapter_sha256"]) is str and
          HEX64.fullmatch(bundle["adapter_sha256"]) is not None)
+    need(type(bundle["adapter_receipt_sha256"]) is str and
+         HEX64.fullmatch(bundle["adapter_receipt_sha256"]) is not None)
     need(type(bundle["attempts"]) is list and len(bundle["attempts"]) <= 36)
+
+    if bundle["kind"] == "measured":
+        need(adapter_output is not None and adapter_output.is_absolute())
+        try:
+            receipt = verify_adapter_receipt(
+                adapter_output,
+                expected_source_commit=bundle["source_commit"],
+                root=root,
+            )
+        except ReceiptError:
+            raise EvaluationError("cosmo evaluation evidence rejected") from None
+        need(receipt["adapter_sha256"] == bundle["adapter_sha256"])
+        need(receipt["receipt_sha256"] == bundle["adapter_receipt_sha256"])
+    else:
+        need(adapter_output is None)
 
     attempts = {}
     attempt_ids = set()
@@ -138,17 +198,21 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
 
         runtime = row["runtime"]
         need(type(runtime) is dict and list(runtime) == [
-            "base_model", "base_revision", "adapter_sha256",
-            "software_lock_sha256", "hardware", "precision", "quantization",
+            "base_model", "base_revision", "adapter_sha256", "adapter_receipt_sha256",
+            "software_lock_sha256", "runtime_evidence_sha256", "hardware",
+            "precision", "quantization",
         ])
         need(runtime["base_model"] == recipe["base_model"])
         need(runtime["base_revision"] == recipe["base_revision"])
         need(type(runtime["software_lock_sha256"]) is str and
              HEX64.fullmatch(runtime["software_lock_sha256"]) is not None)
+        need(type(runtime["runtime_evidence_sha256"]) is str and
+             HEX64.fullmatch(runtime["runtime_evidence_sha256"]) is not None)
         for field in ("hardware", "precision", "quantization"):
             need(type(runtime[field]) is str and 0 < len(runtime[field]) <= 128)
         expected_adapter = bundle["adapter_sha256"] if row["variant"] == "trained_adapter" else None
         need(runtime["adapter_sha256"] == expected_adapter)
+        need(runtime["adapter_receipt_sha256"] == bundle["adapter_receipt_sha256"])
         fingerprint = digest({key: value for key, value in runtime.items()
                               if key != "adapter_sha256"})
         runtime_fingerprint = runtime_fingerprint or fingerprint
@@ -194,6 +258,8 @@ def analyze(bundle: dict, *, root: Path = pilot.ROOT,
         "plan_sha256": plan_sha256,
         "dataset_sha256": plan["dataset_sha256"],
         "prompt_sha256": plan["prompt_sha256"],
+        "adapter_sha256": bundle["adapter_sha256"],
+        "adapter_receipt_sha256": bundle["adapter_receipt_sha256"],
         "expected_attempts": len(expected),
         "provided_attempts": len(attempts),
         "missing_attempts": len(missing),
@@ -213,6 +279,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("bundle", nargs="?", type=Path)
     parser.add_argument("--require-complete", action="store_true")
+    parser.add_argument("--adapter-output", type=Path,
+                        help="External adapter run directory required for measured evidence")
     arguments = parser.parse_args(argv)
     try:
         if arguments.bundle is None:
@@ -227,7 +295,11 @@ def main(argv: list[str] | None = None) -> int:
         else:
             value = read_json(arguments.bundle)
             need(type(value) is dict)
-            report = analyze(value, require_complete=arguments.require_complete)
+            report = analyze(
+                value,
+                require_complete=arguments.require_complete,
+                adapter_output=arguments.adapter_output,
+            )
         print(json.dumps(report, sort_keys=True))
     except EvaluationError as error:
         print(str(error), file=sys.stderr)
