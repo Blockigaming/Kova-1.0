@@ -8,6 +8,33 @@ permissions:
   contents: read
 
 jobs:
+  cosmo-peft-cpu-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements/cosmo-loss-mask-py312-linux-cpu.lock
+      - name: Install hash-locked CPU-only SFT dependencies
+        env:
+          PIP_CONFIG_FILE: /dev/null
+          PIP_EXTRA_INDEX_URL: ""
+        run: |
+          python -m pip install --disable-pip-version-check \
+            --require-hashes -r requirements/cosmo-loss-mask-py312-linux-cpu.lock
+          python -m pip check
+      - name: Verify synthetic Qwen3 LoRA forward, backward and adapter reload
+        env:
+          HF_HUB_OFFLINE: '1'
+          TRANSFORMERS_OFFLINE: '1'
+          HF_DATASETS_OFFLINE: '1'
+          WANDB_DISABLED: 'true'
+          CUDA_VISIBLE_DEVICES: ""
+        run: python -m training.validate_kova_cosmo_peft_cpu
+
   cosmo-sft-api-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 20

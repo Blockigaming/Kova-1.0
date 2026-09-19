@@ -131,4 +131,20 @@ Azure T4, that FP16 training is stable, or that save/reload and evaluation work.
 Those checks, human data review and the base/configured-base/trained comparison
 remain open. The separate CPU probe lock must not be used as a GPU training lock.
 
+## Synthetic Qwen3/PEFT compatibility check
+
+`training.validate_kova_cosmo_peft_cpu` uses the same CPU-only lock to construct
+a two-layer random Qwen3 model from configuration. It verifies that every one of
+the seven configured target names matches both layers, that PEFT creates only
+LoRA trainable parameters, and that a synthetic completion-loss backward pass
+produces finite gradients without touching frozen base parameters. One synthetic
+optimizer step makes the temporary adapter nontrivial; safe serialization,
+local-only reload, tensor equality and deterministic logits are then checked.
+The temporary adapter is deleted when the check exits.
+
+This is an API and serialization fixture, not Kova fine-tuning. It uses no
+selected checkpoint weights or training examples and proves nothing about the
+real checkpoint's memory use, quality, FP16 behavior, CUDA, T4 compatibility or
+eventual adapter. Those claims still require the separately approved GPU pilot.
+
 Reference: https://huggingface.co/docs/trl/sft_trainer
